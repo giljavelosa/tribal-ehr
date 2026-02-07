@@ -99,7 +99,7 @@ export const PatientBanner = React.memo(function PatientBanner({
     activeAllergies.length === 0 && allergies.length >= 0;
 
   return (
-    <div className="patient-banner sticky top-0 z-40 border-b border-border/60 bg-card/98 backdrop-blur-sm shadow-clinical">
+    <div className="patient-banner sticky top-0 z-40 border-b border-border/60 bg-card/98 backdrop-blur-sm shadow-clinical" role="banner" aria-label={`Patient: ${patient.lastName}, ${patient.firstName} - MRN: ${patient.mrn}`}>
       {/* Primary Identification Bar - ONC/Joint Commission Required */}
       <div className="flex flex-wrap items-center gap-5 p-5">
         {/* Avatar with Photo ID verification */}
@@ -308,8 +308,9 @@ export const PatientBanner = React.memo(function PatientBanner({
               ? 'border-t border-destructive/30 bg-destructive/10 text-destructive'
               : 'border-t border-amber-500/30 bg-amber-50 text-amber-800 dark:bg-amber-950/30 dark:text-amber-200'
           }`}
+          role="alert"
         >
-          <AlertCircle className="h-4 w-4 flex-shrink-0" />
+          <AlertCircle className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
           <span className="font-medium">Allergies:</span>
           <span>
             {activeAllergies
@@ -321,8 +322,8 @@ export const PatientBanner = React.memo(function PatientBanner({
           </span>
         </div>
       ) : (
-        <div className="flex items-center gap-2 border-t px-4 py-2 text-sm text-muted-foreground">
-          <AlertCircle className="h-4 w-4 flex-shrink-0" />
+        <div className="flex items-center gap-2 border-t px-4 py-2 text-sm text-muted-foreground" role="status">
+          <AlertCircle className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
           <span className="font-medium">NKDA</span>
           <span>(No Known Drug Allergies)</span>
         </div>

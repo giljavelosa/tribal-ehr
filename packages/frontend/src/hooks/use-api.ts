@@ -182,6 +182,46 @@ export interface Order {
   note?: string;
 }
 
+export interface ProviderOrder {
+  id: string;
+  patientId: string;
+  encounterId?: string;
+  orderType: 'medication' | 'laboratory' | 'imaging';
+  status: 'draft' | 'active' | 'completed' | 'cancelled' | 'on-hold' | 'entered-in-error';
+  priority: 'routine' | 'urgent' | 'stat' | 'asap';
+  code?: string;
+  codeSystem?: string;
+  codeDisplay?: string;
+  orderDetails: Record<string, unknown>;
+  cdsAlerts: Array<{ severity: string; summary: string; detail: string; source: string; overridable: boolean }>;
+  orderedBy: string;
+  orderedAt: string;
+  signedBy?: string;
+  signedAt?: string;
+  clinicalIndication?: string;
+  notes?: string;
+  fhirId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OrderSetItem {
+  id: string;
+  name: string;
+  category?: string;
+  description?: string;
+  diagnosisCodes: string[];
+  orders: unknown[];
+  approved: boolean;
+  approvedBy?: string;
+  approvedAt?: string;
+  version: number;
+  active: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ClinicalNote {
   id: string;
   type: 'soap' | 'hp' | 'progress' | 'procedure' | 'discharge';
@@ -280,6 +320,28 @@ export interface PaginatedResponse<T> {
 
 // ---- Query Keys ----
 
+export interface FamilyHistory {
+  id: string;
+  patientId: string;
+  relationship: string;
+  relativeName?: string;
+  conditionCode?: string;
+  conditionDisplay: string;
+  conditionSystem?: string;
+  onsetAge?: number;
+  onsetRangeLow?: number;
+  onsetRangeHigh?: number;
+  deceased: boolean;
+  deceasedAge?: number;
+  causeOfDeath?: string;
+  note?: string;
+  status: string;
+  recordedDate?: string;
+  recordedBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export const queryKeys = {
   patients: (params?: PatientSearchParams) => ['patients', params] as const,
   patient: (id: string) => ['patients', id] as const,
@@ -292,10 +354,13 @@ export const queryKeys = {
   immunizations: (patientId: string) => ['patients', patientId, 'immunizations'] as const,
   vitals: (patientId: string) => ['patients', patientId, 'vitals'] as const,
   orders: (patientId: string) => ['patients', patientId, 'orders'] as const,
+  providerOrders: (params?: Record<string, string>) => ['provider-orders', params] as const,
+  orderSets: (params?: Record<string, string>) => ['order-sets', params] as const,
   notes: (patientId: string) => ['patients', patientId, 'notes'] as const,
   carePlans: (patientId: string) => ['patients', patientId, 'care-plans'] as const,
   documents: (patientId: string) => ['patients', patientId, 'documents'] as const,
   devices: (patientId: string) => ['patients', patientId, 'devices'] as const,
+  familyHistory: (patientId: string) => ['patients', patientId, 'family-history'] as const,
   appointments: (params?: Record<string, string>) => ['appointments', params] as const,
   schedule: (date: string, providerId?: string) => ['schedule', date, providerId] as const,
 };
@@ -684,6 +749,189 @@ export function useCreateOrder() {
   });
 }
 
+// ---- Provider Orders (CPOE) ----
+
+export function useProviderOrders(params?: Record<string, string>) {
+  return useQuery({
+    queryKey: queryKeys.providerOrders(params),
+    queryFn: async () => {
+      const response = await api.get<{ data: ProviderOrder[]; pagination?: unknown }>('/orders', { params });
+      return response.data.data;
+    },
+    staleTime: 1 * 60 * 1000,
+  });
+}
+
+export function usePendingOrders() {
+  return useQuery({
+    queryKey: ['pending-orders'],
+    queryFn: async () => {
+      const response = await api.get<{ data: ProviderOrder[] }>('/orders/pending');
+      return response.data.data;
+    },
+    staleTime: 1 * 60 * 1000,
+  });
+}
+
+export function useSignOrder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (orderId: string) => {
+      const response = await api.post<{ data: ProviderOrder }>(`/orders/${orderId}/sign`);
+      return response.data.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['provider-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['pending-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['patients'] });
+    },
+  });
+}
+
+export function useCreateMedicationOrder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: {
+      patientId: string;
+      encounterId?: string;
+      priority?: string;
+      medication: {
+        rxnormCode: string;
+        displayName: string;
+        dosage: string;
+        route: string;
+        frequency: string;
+        duration?: string;
+        quantity?: number;
+        refills?: number;
+        instructions?: string;
+        prn?: boolean;
+        prnReason?: string;
+      };
+    }) => {
+      const response = await api.post<{ data: ProviderOrder }>('/orders/medications', data);
+      return response.data.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['provider-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['pending-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['patients'] });
+    },
+  });
+}
+
+export function useCreateLabOrder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: {
+      patientId: string;
+      encounterId?: string;
+      priority?: string;
+      lab: {
+        loincCode: string;
+        displayName: string;
+        panelCode?: string;
+        specimenType?: string;
+        collectionInstructions?: string;
+        clinicalNotes?: string;
+        fastingRequired?: boolean;
+      };
+    }) => {
+      const response = await api.post<{ data: ProviderOrder }>('/orders/laboratory', data);
+      return response.data.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['provider-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['pending-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['patients'] });
+    },
+  });
+}
+
+export function useCreateImagingOrder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: {
+      patientId: string;
+      encounterId?: string;
+      priority?: string;
+      imaging: {
+        procedureCode: string;
+        displayName: string;
+        clinicalIndication: string;
+        bodyPart?: string;
+        laterality?: string;
+      };
+    }) => {
+      const response = await api.post<{ data: ProviderOrder }>('/orders/imaging', data);
+      return response.data.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['provider-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['pending-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['patients'] });
+    },
+  });
+}
+
+// ---- Order Sets ----
+
+export function useOrderSets(params?: Record<string, string>) {
+  return useQuery({
+    queryKey: queryKeys.orderSets(params),
+    queryFn: async () => {
+      const response = await api.get<{ data: OrderSetItem[] }>('/order-sets', { params });
+      return response.data.data;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useCreateOrderSet() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: {
+      name: string;
+      category?: string;
+      description?: string;
+      diagnosisCodes?: string[];
+      orders: unknown[];
+    }) => {
+      const response = await api.post<{ data: OrderSetItem }>('/order-sets', data);
+      return response.data.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['order-sets'] });
+    },
+  });
+}
+
+export function useApplyOrderSet() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      orderSetId,
+      patientId,
+      encounterId,
+    }: {
+      orderSetId: string;
+      patientId: string;
+      encounterId?: string;
+    }) => {
+      const response = await api.post<{ data: { ordersCreated: number } }>(
+        `/order-sets/${orderSetId}/apply`,
+        { patientId, encounterId },
+      );
+      return response.data.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['order-sets'] });
+      queryClient.invalidateQueries({ queryKey: ['provider-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['pending-orders'] });
+    },
+  });
+}
+
 // ---- Clinical Notes ----
 
 export function useNotes(patientId: string) {
@@ -750,7 +998,96 @@ export function useUpdateNote() {
   });
 }
 
+// ---- Co-sign Notes ----
+
+export function useCosignNote() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      noteId,
+    }: {
+      noteId: string;
+      patientId: string;
+    }) => {
+      const response = await api.post<ClinicalNote>(
+        `/clinical-notes/${noteId}/cosign`,
+      );
+      return response.data;
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.notes(variables.patientId),
+      });
+    },
+  });
+}
+
+// ---- Update Medication ----
+
+export function useUpdateMedication() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      patientId,
+      medicationId,
+      data,
+    }: {
+      patientId: string;
+      medicationId: string;
+      data: Partial<MedicationRequest>;
+    }) => {
+      const response = await api.put<MedicationRequest>(
+        `/medications/${medicationId}`,
+        data,
+      );
+      return response.data;
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.medications(variables.patientId),
+      });
+    },
+  });
+}
+
+// ---- Forgot Password ----
+
+export function useForgotPassword() {
+  return useMutation({
+    mutationFn: async ({ email }: { email: string }) => {
+      const response = await api.post('/auth/forgot-password', { email });
+      return response.data;
+    },
+  });
+}
+
 // ---- Care Plans ----
+
+export function useUpdateCarePlan() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      patientId,
+      carePlanId,
+      data,
+    }: {
+      patientId: string;
+      carePlanId: string;
+      data: Partial<CarePlan>;
+    }) => {
+      const response = await api.put<CarePlan>(
+        `/patients/${patientId}/care-plans/${carePlanId}`,
+        data,
+      );
+      return response.data;
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.carePlans(variables.patientId),
+      });
+    },
+  });
+}
 
 export function useCarePlans(patientId: string) {
   return useQuery({
@@ -927,6 +1264,563 @@ export function useUpdateAppointment() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['appointments'] });
       queryClient.invalidateQueries({ queryKey: ['schedule'] });
+    },
+  });
+}
+
+// ---- Family Health History (§170.315(a)(12)) ----
+
+export function useFamilyHistory(patientId: string) {
+  return useQuery({
+    queryKey: queryKeys.familyHistory(patientId),
+    queryFn: async () => {
+      const response = await api.get<{ data: FamilyHistory[] }>(
+        '/family-history',
+        { params: { patientId } },
+      );
+      return response.data.data;
+    },
+    enabled: !!patientId,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useCreateFamilyHistory() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: Partial<FamilyHistory>) => {
+      const response = await api.post<{ data: FamilyHistory }>(
+        '/family-history',
+        data,
+      );
+      return response.data.data;
+    },
+    onSuccess: (_data, variables) => {
+      if (variables.patientId) {
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.familyHistory(variables.patientId),
+        });
+      }
+    },
+  });
+}
+
+export function useUpdateFamilyHistory() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      patientId,
+      data,
+    }: {
+      id: string;
+      patientId: string;
+      data: Partial<FamilyHistory>;
+    }) => {
+      const response = await api.put<{ data: FamilyHistory }>(
+        `/family-history/${id}`,
+        data,
+      );
+      return response.data.data;
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.familyHistory(variables.patientId),
+      });
+    },
+  });
+}
+
+export function useDeleteFamilyHistory() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      patientId,
+    }: {
+      id: string;
+      patientId: string;
+    }) => {
+      const response = await api.delete<{ data: FamilyHistory }>(
+        `/family-history/${id}`,
+      );
+      return response.data.data;
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.familyHistory(variables.patientId),
+      });
+    },
+  });
+}
+
+// ---- Secure Messaging ----
+
+export interface ApiMessage {
+  id: string;
+  senderId: string;
+  senderName?: string;
+  recipientId: string;
+  recipientName?: string;
+  patientId?: string;
+  patientName?: string;
+  subject: string;
+  body: string;
+  priority: 'normal' | 'high' | 'urgent';
+  readAt?: string;
+  parentId?: string;
+  threadId: string;
+  createdAt: string;
+  flagged?: boolean;
+  followUpDate?: string;
+  escalated?: boolean;
+}
+
+export interface MessageFilters {
+  unreadOnly?: boolean;
+  patientId?: string;
+  priority?: 'normal' | 'high' | 'urgent';
+  startDate?: string;
+  endDate?: string;
+  page?: number;
+  limit?: number;
+}
+
+export function useMessagesInbox(filters?: MessageFilters) {
+  return useQuery({
+    queryKey: ['messages', 'inbox', filters] as const,
+    queryFn: async () => {
+      const response = await api.get<{ data: ApiMessage[]; pagination?: { total: number; page: number; limit: number; pages: number } }>(
+        '/messages/inbox',
+        { params: filters },
+      );
+      return response.data;
+    },
+    staleTime: 30 * 1000,
+  });
+}
+
+export function useMessagesSent(filters?: MessageFilters) {
+  return useQuery({
+    queryKey: ['messages', 'sent', filters] as const,
+    queryFn: async () => {
+      const response = await api.get<{ data: ApiMessage[]; pagination?: { total: number; page: number; limit: number; pages: number } }>(
+        '/messages/sent',
+        { params: filters },
+      );
+      return response.data;
+    },
+    staleTime: 30 * 1000,
+  });
+}
+
+export function useMessagesFlagged() {
+  return useQuery({
+    queryKey: ['messages', 'flagged'] as const,
+    queryFn: async () => {
+      const response = await api.get<{ data: ApiMessage[] }>('/messages/flagged');
+      return response.data.data;
+    },
+    staleTime: 30 * 1000,
+  });
+}
+
+export function useMessagesUnreadCount() {
+  return useQuery({
+    queryKey: ['messages', 'unread-count'] as const,
+    queryFn: async () => {
+      const response = await api.get<{ data: { count: number } }>('/messages/unread-count');
+      return response.data.data.count;
+    },
+    staleTime: 30 * 1000,
+  });
+}
+
+export function useSendMessage() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: {
+      recipientId: string;
+      subject: string;
+      body: string;
+      patientId?: string;
+      priority?: 'normal' | 'high' | 'urgent';
+    }) => {
+      const response = await api.post<{ data: ApiMessage }>('/messages', data);
+      return response.data.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['messages'] });
+    },
+  });
+}
+
+export function useReplyToMessage() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, body }: { id: string; body: string }) => {
+      const response = await api.post<{ data: ApiMessage }>(`/messages/${id}/reply`, { body });
+      return response.data.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['messages'] });
+    },
+  });
+}
+
+export function useMarkMessageRead() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      await api.post(`/messages/${id}/read`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['messages'] });
+    },
+  });
+}
+
+export function useFlagMessage() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, flagged }: { id: string; flagged: boolean }) => {
+      if (flagged) {
+        await api.post(`/messages/${id}/flag`);
+      } else {
+        await api.delete(`/messages/${id}/flag`);
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['messages'] });
+    },
+  });
+}
+
+export function useForwardMessage() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, recipientId, note }: { id: string; recipientId: string; note?: string }) => {
+      const response = await api.post<{ data: ApiMessage }>(`/messages/${id}/forward`, { recipientId, note });
+      return response.data.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['messages'] });
+    },
+  });
+}
+
+export function useSetMessageFollowUp() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, followUpDate }: { id: string; followUpDate: string }) => {
+      await api.put(`/messages/${id}/follow-up`, { followUpDate });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['messages'] });
+    },
+  });
+}
+
+export function useEscalateMessage() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, escalateTo }: { id: string; escalateTo: string }) => {
+      await api.post(`/messages/${id}/escalate`, { escalateTo });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['messages'] });
+    },
+  });
+}
+
+// ---- Results Inbox ----
+
+export interface ResultsInboxItem {
+  id: string;
+  patientId: string;
+  patientName?: string;
+  orderType: 'medication' | 'laboratory' | 'imaging';
+  description?: string;
+  status: string;
+  priority: string;
+  resultDate?: string;
+  acknowledged: boolean;
+  code?: string;
+  codeSystem?: string;
+  codeDisplay?: string;
+  orderDetails: Record<string, unknown>;
+  cdsAlerts: Array<{ severity: string; summary: string; detail: string; source: string; overridable: boolean }>;
+  orderedBy: string;
+  orderedAt: string;
+  signedBy?: string;
+  signedAt?: string;
+  clinicalIndication?: string;
+  notes?: string;
+  fhirId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ResultsInboxFilters {
+  status?: string;
+  orderType?: string;
+  priority?: string;
+  startDate?: string;
+  endDate?: string;
+}
+
+export function useResultsInbox(filters?: ResultsInboxFilters) {
+  return useQuery({
+    queryKey: ['results-inbox', filters] as const,
+    queryFn: async () => {
+      const response = await api.get<{ data: ResultsInboxItem[] }>(
+        '/results-inbox',
+        { params: filters },
+      );
+      return response.data.data;
+    },
+    staleTime: 30 * 1000,
+  });
+}
+
+export function useAcknowledgeResult() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const response = await api.post<{ data: ResultsInboxItem }>(`/results-inbox/${id}/acknowledge`);
+      return response.data.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['results-inbox'] });
+    },
+  });
+}
+
+export function useBulkAcknowledgeResults() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (orderIds: string[]) => {
+      const response = await api.post<{ data: { acknowledged: number } }>('/results-inbox/bulk-acknowledge', { orderIds });
+      return response.data.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['results-inbox'] });
+    },
+  });
+}
+
+// ---- Escalation Events ----
+
+export interface EscalationEventItem {
+  id: string;
+  ruleId?: string;
+  sourceType: string;
+  sourceId: string;
+  originalRecipient: string;
+  escalatedTo: string;
+  reason?: string;
+  acknowledged: boolean;
+  acknowledgedAt?: string;
+  createdAt: string;
+}
+
+export function useEscalationEvents(params?: Record<string, string>) {
+  return useQuery({
+    queryKey: ['escalation-events', params],
+    queryFn: async () => {
+      const response = await api.get<{ data: EscalationEventItem[] }>('/admin/escalation-events', { params });
+      return response.data.data;
+    },
+    staleTime: 1 * 60 * 1000,
+  });
+}
+
+// ---- Quality Measures Dashboard ----
+
+export interface QualityMeasureResult {
+  measureId: string;
+  measureName: string;
+  description: string;
+  numerator: number;
+  denominator: number;
+  exclusions: number;
+  exceptions: number;
+  rate: number;
+  period: { start: string; end: string };
+}
+
+export interface QualityDashboard {
+  measures: QualityMeasureResult[];
+  summary: {
+    totalMeasures: number;
+    averageRate: number;
+    measuresAboveThreshold: number;
+    measuresBelowThreshold: number;
+  };
+}
+
+export function useQualityMeasuresDashboard(period?: { start: string; end: string }) {
+  return useQuery({
+    queryKey: ['quality-measures', 'dashboard', period],
+    queryFn: async () => {
+      const response = await api.get<{ data: QualityDashboard }>('/quality-measures/dashboard', {
+        params: period,
+      });
+      return response.data.data;
+    },
+    enabled: !!period?.start && !!period?.end,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+// ---- Patient Lists ----
+
+export interface PatientListItem {
+  id: string;
+  userId: string;
+  name: string;
+  description?: string;
+  listType: string;
+  isDefault: boolean;
+  patientCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PatientListMember {
+  id: string;
+  listId: string;
+  patientId: string;
+  patientName?: string;
+  patientMrn?: string;
+  addedAt: string;
+  addedBy?: string;
+  notes?: string;
+}
+
+export interface PatientListDetail extends PatientListItem {
+  members: PatientListMember[];
+}
+
+export function usePatientLists() {
+  return useQuery({
+    queryKey: ['patient-lists'],
+    queryFn: async () => {
+      const response = await api.get<{ data: PatientListItem[] }>('/patients/lists');
+      return response.data.data;
+    },
+    staleTime: 2 * 60 * 1000,
+  });
+}
+
+export function usePatientListDetail(listId: string) {
+  return useQuery({
+    queryKey: ['patient-lists', listId],
+    queryFn: async () => {
+      const response = await api.get<{ data: PatientListDetail }>(`/patients/lists/${listId}`);
+      return response.data.data;
+    },
+    enabled: !!listId,
+    staleTime: 2 * 60 * 1000,
+  });
+}
+
+export function useCreatePatientList() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: { name: string; description?: string; listType?: string }) => {
+      const response = await api.post<{ data: PatientListItem }>('/patients/lists', data);
+      return response.data.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['patient-lists'] });
+    },
+  });
+}
+
+export function useAddPatientToList() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ listId, patientId, notes }: { listId: string; patientId: string; notes?: string }) => {
+      const response = await api.post<{ data: PatientListMember }>(`/patients/lists/${listId}/patients`, {
+        patientId,
+        notes,
+      });
+      return response.data.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['patient-lists'] });
+    },
+  });
+}
+
+export function useRemovePatientFromList() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ listId, patientId }: { listId: string; patientId: string }) => {
+      await api.delete(`/patients/lists/${listId}/patients/${patientId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['patient-lists'] });
+    },
+  });
+}
+
+// ---- QA Dashboard ----
+
+export interface CDSOverrideAnalytics {
+  totalOverrides: number;
+  overridesByType: Array<{ alertType: string; count: number }>;
+  overridesBySeverity: Array<{ severity: string; count: number }>;
+  overridesByProvider: Array<{ userId: string; count: number }>;
+  appropriateOverrides: number;
+  inappropriateOverrides: number;
+  unreviewedOverrides: number;
+}
+
+export interface CDSOverrideRecord {
+  id: string;
+  cardId?: string;
+  userId: string;
+  patientId: string;
+  hookInstance?: string;
+  reasonCode?: string;
+  reasonText?: string;
+  cardSummary?: string;
+  createdAt: string;
+}
+
+export function useQADashboard(params?: Record<string, string>) {
+  return useQuery({
+    queryKey: ['qa-dashboard', params],
+    queryFn: async () => {
+      const response = await api.get<{ data: { cdsOverrides: CDSOverrideAnalytics } }>('/admin/qa/dashboard', { params });
+      return response.data.data;
+    },
+    staleTime: 2 * 60 * 1000,
+  });
+}
+
+export function useUnreviewedOverrides() {
+  return useQuery({
+    queryKey: ['qa-overrides', 'unreviewed'],
+    queryFn: async () => {
+      const response = await api.get<{ data: CDSOverrideRecord[] }>('/admin/qa/overrides/unreviewed');
+      return response.data.data;
+    },
+    staleTime: 1 * 60 * 1000,
+  });
+}
+
+export function useReviewOverride() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, wasAppropriate }: { id: string; wasAppropriate: boolean }) => {
+      await api.post(`/admin/qa/overrides/${id}/review`, { wasAppropriate });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['qa-dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['qa-overrides'] });
     },
   });
 }
