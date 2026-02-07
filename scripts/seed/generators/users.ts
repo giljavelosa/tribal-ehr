@@ -17,7 +17,9 @@ export interface GeneratedUsers {
 
 export async function seedUsers(trx: Knex.Transaction): Promise<GeneratedUsers> {
   // Pre-hash password once
-  const passwordHash = await bcrypt.hash('Password123!', 12);
+  // NOTE: This is for DEVELOPMENT/DEMO only. Production should use secure passwords.
+  const devPassword = process.env.SEED_USER_PASSWORD || 'Password123!';
+  const passwordHash = await bcrypt.hash(devPassword, 12);
 
   const users: Record<string, unknown>[] = [];
   const result: GeneratedUsers = {

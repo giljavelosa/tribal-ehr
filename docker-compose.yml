@@ -7,7 +7,7 @@ services:
     environment:
       POSTGRES_DB: tribal_ehr
       POSTGRES_USER: ehr_admin
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ehr_secure_dev_2024}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
     ports:
       - "5432:5432"
@@ -70,7 +70,7 @@ services:
     environment:
       spring.datasource.url: jdbc:postgresql://postgres:5432/tribal_ehr
       spring.datasource.username: ehr_admin
-      spring.datasource.password: ${POSTGRES_PASSWORD:-ehr_secure_dev_2024}
+      spring.datasource.password: ${POSTGRES_PASSWORD}
       spring.datasource.driverClassName: org.postgresql.Driver
       spring.jpa.properties.hibernate.dialect: ca.uhn.fhir.jpa.model.dialect.HapiFhirPostgres94Dialect
       hapi.fhir.fhir_version: R4
@@ -106,11 +106,11 @@ services:
     environment:
       NODE_ENV: ${NODE_ENV:-development}
       PORT: 3001
-      DATABASE_URL: postgresql://ehr_admin:${POSTGRES_PASSWORD:-ehr_secure_dev_2024}@postgres:5432/tribal_ehr
+      DATABASE_URL: postgresql://ehr_admin:${POSTGRES_PASSWORD}@postgres:5432/tribal_ehr
       REDIS_URL: redis://:${REDIS_PASSWORD:-ehr_redis_dev_2024}@redis:6379
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-ehr_rabbit}:${RABBITMQ_PASSWORD:-ehr_rabbit_dev_2024}@rabbitmq:5672/tribal_ehr
       FHIR_SERVER_URL: http://hapi-fhir:8080/fhir
-      JWT_SECRET: ${JWT_SECRET:-tribal_ehr_jwt_secret_change_in_production}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
       SESSION_TIMEOUT_MINUTES: 15
       CORS_ORIGIN: http://localhost:3000
