@@ -1,0 +1,66 @@
+hapi:
+  fhir:
+    fhir_version: R4
+    server_address: http://localhost:8080/fhir
+    allow_multiple_delete: true
+    allow_external_references: true
+    allow_placeholder_references: true
+    narrative_enabled: false
+    cors:
+      allow_Credentials: true
+      allowed_origin:
+        - "*"
+    validation:
+      requests_enabled: true
+      responses_enabled: false
+    bulk_export_enabled: true
+    openapi_enabled: true
+    implementationguides:
+      uscore:
+        name: hl7.fhir.us.core
+        version: 6.1.0
+        url: "https://packages.simplifier.net/hl7.fhir.us.core/6.1.0"
+    supported_resource_types:
+      - Patient
+      - Encounter
+      - Condition
+      - Observation
+      - AllergyIntolerance
+      - MedicationRequest
+      - MedicationStatement
+      - Procedure
+      - Immunization
+      - CarePlan
+      - CareTeam
+      - Goal
+      - DocumentReference
+      - Device
+      - Provenance
+      - DiagnosticReport
+      - ServiceRequest
+      - Coverage
+      - Consent
+      - AuditEvent
+      - Bundle
+      - Composition
+      - Organization
+      - Practitioner
+      - PractitionerRole
+      - Location
+      - Schedule
+      - Slot
+      - Appointment
+      - Communication
+      - QuestionnaireResponse
+      - OperationOutcome
+spring:
+  datasource:
+    url: jdbc:postgresql://postgres:5432/tribal_ehr
+    username: ehr_admin
+    driverClassName: org.postgresql.Driver
+  jpa:
+    properties:
+      hibernate:
+        dialect: ca.uhn.fhir.jpa.model.dialect.HapiFhirPostgres94Dialect
+        search:
+          lucene_analyzer: standard

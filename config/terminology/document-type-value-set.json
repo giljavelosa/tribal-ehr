@@ -1,0 +1,29 @@
+{
+  "resourceType": "ValueSet",
+  "id": "tribal-ehr-document-types",
+  "url": "http://tribal-ehr.org/fhir/ValueSet/document-types",
+  "version": "1.0.0",
+  "name": "TribalEHRDocumentTypes",
+  "title": "Tribal EHR Clinical Document Types",
+  "status": "active",
+  "description": "LOINC codes for clinical document types required by USCDI v3",
+  "compose": {
+    "include": [
+      {
+        "system": "http://loinc.org",
+        "concept": [
+          { "code": "11488-4", "display": "Consultation Note" },
+          { "code": "18842-5", "display": "Discharge Summary" },
+          { "code": "34117-2", "display": "History and Physical Note" },
+          { "code": "11506-3", "display": "Progress Note" },
+          { "code": "28570-0", "display": "Procedure Note" },
+          { "code": "18748-4", "display": "Diagnostic Imaging Report" },
+          { "code": "11502-2", "display": "Laboratory Report" },
+          { "code": "57133-1", "display": "Referral Note" },
+          { "code": "18761-7", "display": "Transfer Summary" },
+          { "code": "34133-9", "display": "Summarization of Episode Note (CCD)" }
+        ]
+      }
+    ]
+  }
+}

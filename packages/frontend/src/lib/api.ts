@@ -1,0 +1,78 @@
+import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
+
+const api = axios.create({
+  baseURL: import.meta.env.VITE_API_URL || '/api/v1',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  timeout: 30000,
+});
+
+// Request interceptor: attach JWT token
+api.interceptors.request.use(
+  (config: InternalAxiosRequestConfig) => {
+    const token = localStorage.getItem('tribal-ehr-token');
+    if (token && config.headers) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  },
+);
+
+// Response interceptor: handle 401, token refresh, error transformation
+api.interceptors.response.use(
+  (response) => response,
+  async (error: AxiosError) => {
+    const originalRequest = error.config as InternalAxiosRequestConfig & {
+      _retry?: boolean;
+    };
+
+    // Handle 401 Unauthorized
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      originalRequest._retry = true;
+
+      const refreshToken = localStorage.getItem('tribal-ehr-refresh-token');
+
+      if (refreshToken) {
+        try {
+          const response = await axios.post(
+            `${import.meta.env.VITE_API_URL || ''}/auth/refresh`,
+            { refreshToken },
+          );
+
+          const { token: newToken } = response.data;
+          localStorage.setItem('tribal-ehr-token', newToken);
+
+          if (originalRequest.headers) {
+            originalRequest.headers.Authorization = `Bearer ${newToken}`;
+          }
+
+          return api(originalRequest);
+        } catch (refreshError) {
+          // Refresh failed, clear tokens and redirect to login
+          localStorage.removeItem('tribal-ehr-token');
+          localStorage.removeItem('tribal-ehr-refresh-token');
+          window.location.href = '/login';
+          return Promise.reject(refreshError);
+        }
+      } else {
+        // No refresh token, redirect to login
+        localStorage.removeItem('tribal-ehr-token');
+        window.location.href = '/login';
+      }
+    }
+
+    // Transform error for consistent handling
+    const message =
+      (error.response?.data as { message?: string })?.message ||
+      error.message ||
+      'An unexpected error occurred';
+
+    return Promise.reject(new Error(message));
+  },
+);
+
+export default api;

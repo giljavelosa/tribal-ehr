@@ -1,0 +1,31 @@
+{
+  "resourceType": "ValueSet",
+  "id": "tribal-ehr-vital-signs",
+  "url": "http://tribal-ehr.org/fhir/ValueSet/vital-signs",
+  "version": "1.0.0",
+  "name": "TribalEHRVitalSigns",
+  "title": "Tribal EHR Vital Signs Value Set",
+  "status": "active",
+  "description": "LOINC codes for vital sign observations used in Tribal EHR",
+  "compose": {
+    "include": [
+      {
+        "system": "http://loinc.org",
+        "concept": [
+          { "code": "8480-6", "display": "Systolic blood pressure" },
+          { "code": "8462-4", "display": "Diastolic blood pressure" },
+          { "code": "85354-9", "display": "Blood pressure panel with all children optional" },
+          { "code": "8867-4", "display": "Heart rate" },
+          { "code": "9279-1", "display": "Respiratory rate" },
+          { "code": "8310-5", "display": "Body temperature" },
+          { "code": "59408-5", "display": "Oxygen saturation in Arterial blood by Pulse oximetry" },
+          { "code": "8302-2", "display": "Body height" },
+          { "code": "29463-7", "display": "Body weight" },
+          { "code": "39156-5", "display": "Body mass index (BMI)" },
+          { "code": "9843-4", "display": "Head Occipital-frontal circumference" },
+          { "code": "3151-8", "display": "Inhaled oxygen flow rate" }
+        ]
+      }
+    ]
+  }
+}

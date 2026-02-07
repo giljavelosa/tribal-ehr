@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "lib": ["ES2022"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "./dist",
+    "rootDir": ".",
+    "composite": true,
+    "paths": {
+      "@tribal-ehr/shared": ["./packages/shared/src"],
+      "@tribal-ehr/shared/*": ["./packages/shared/src/*"],
+      "@tribal-ehr/hl7-engine": ["./packages/hl7-engine/src"],
+      "@tribal-ehr/hl7-engine/*": ["./packages/hl7-engine/src/*"],
+      "@tribal-ehr/auth": ["./packages/auth/src"],
+      "@tribal-ehr/auth/*": ["./packages/auth/src/*"],
+      "@tribal-ehr/cds-hooks": ["./packages/cds-hooks/src"],
+      "@tribal-ehr/cds-hooks/*": ["./packages/cds-hooks/src/*"]
+    }
+  },
+  "references": [
+    { "path": "./packages/shared" },
+    { "path": "./packages/api" },
+    { "path": "./packages/auth" },
+    { "path": "./packages/hl7-engine" },
+    { "path": "./packages/cds-hooks" }
+  ],
+  "exclude": ["node_modules", "dist", "packages/frontend", "packages/*/src/db/migrations"]
+}

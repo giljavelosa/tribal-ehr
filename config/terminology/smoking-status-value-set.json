@@ -1,0 +1,26 @@
+{
+  "resourceType": "ValueSet",
+  "id": "tribal-ehr-smoking-status",
+  "url": "http://tribal-ehr.org/fhir/ValueSet/smoking-status",
+  "version": "1.0.0",
+  "name": "TribalEHRSmokingStatus",
+  "title": "Tribal EHR Smoking Status",
+  "status": "active",
+  "compose": {
+    "include": [
+      {
+        "system": "http://snomed.info/sct",
+        "concept": [
+          { "code": "449868002", "display": "Current every day smoker" },
+          { "code": "428041000124106", "display": "Current some day smoker" },
+          { "code": "8517006", "display": "Former smoker" },
+          { "code": "266919005", "display": "Never smoker" },
+          { "code": "77176002", "display": "Smoker, current status unknown" },
+          { "code": "266927001", "display": "Unknown if ever smoked" },
+          { "code": "428071000124103", "display": "Current heavy tobacco smoker" },
+          { "code": "428061000124105", "display": "Current light tobacco smoker" }
+        ]
+      }
+    ]
+  }
+}

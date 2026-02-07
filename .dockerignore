@@ -1,0 +1,80 @@
+# =============================================================================
+# Tribal EHR - Docker Ignore
+# =============================================================================
+
+# Dependencies (rebuilt inside container)
+node_modules/
+**/node_modules/
+
+# Git
+.git/
+.gitignore
+
+# Environment files (secrets should be injected at runtime, not baked in)
+.env
+.env.*
+!.env.example
+
+# Build artifacts
+dist/
+build/
+out/
+coverage/
+test-results/
+playwright-report/
+
+# Documentation (not needed in container)
+docs/
+*.md
+LICENSE
+
+# IDE and editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Tests (not needed in production image)
+tests/
+**/*.test.ts
+**/*.test.js
+**/*.spec.ts
+**/*.spec.js
+jest.config.*
+playwright.config.*
+.nyc_output/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Certificates and keys (mount at runtime, never bake in)
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+credentials.json
+
+# PHI data
+data/phi/
+data/exports/
+data/uploads/
+data/bulk-export/
+*.hl7
+*.ccda
+
+# Docker files (avoid recursive context)
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Logs
+logs/
+*.log
+
+# Temporary files
+tmp/
+temp/
+.cache/
+.turbo/

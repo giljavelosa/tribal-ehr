@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "composite": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.spec.ts", "src/db/migrations/**"],
+  "references": [
+    { "path": "../shared" },
+    { "path": "../hl7-engine" },
+    { "path": "../auth" },
+    { "path": "../cds-hooks" }
+  ]
+}

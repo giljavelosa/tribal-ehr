@@ -1,0 +1,39 @@
+{
+  "name": "tribal-ehr",
+  "version": "1.0.0",
+  "description": "Production-grade Electronic Health Record system designed for ONC Health IT Certification (HTI-1)",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:unit": "jest --config tests/jest.config.ts --testPathPattern=tests/unit",
+    "test:integration": "jest --config tests/jest.config.ts --testPathPattern=tests/integration",
+    "test:e2e": "npx playwright test",
+    "lint": "npm run lint --workspaces --if-present",
+    "dev": "docker-compose up -d postgres redis rabbitmq hapi-fhir && concurrently \"npm run dev -w packages/api\" \"npm run dev -w packages/frontend\"",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "docker:build": "docker-compose build",
+    "db:migrate": "npm run migrate -w packages/api",
+    "db:seed": "ts-node scripts/seed-comprehensive.ts",
+    "db:seed:small": "ts-node scripts/seed-comprehensive.ts --small",
+    "db:seed:fhir": "ts-node scripts/seed-data.ts",
+    "cert:test": "bash scripts/run-certification-tests.sh"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "concurrently": "^8.2.0",
+    "typescript": "^5.3.0",
+    "ts-node": "^10.9.0",
+    "jest": "^29.7.0",
+    "@types/jest": "^29.5.0",
+    "ts-jest": "^29.1.0"
+  }
+}

@@ -1,0 +1,178 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: tribal-ehr-postgres
+    environment:
+      POSTGRES_DB: tribal_ehr
+      POSTGRES_USER: ehr_admin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ehr_secure_dev_2024}
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./packages/api/src/db/init:/docker-entrypoint-initdb.d
+    networks:
+      - ehr-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ehr_admin -d tribal_ehr"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: tribal-ehr-redis
+    command: redis-server --requirepass ${REDIS_PASSWORD:-ehr_redis_dev_2024} --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - ehr-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-ehr_redis_dev_2024}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: tribal-ehr-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-ehr_rabbit}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-ehr_rabbit_dev_2024}
+      RABBITMQ_DEFAULT_VHOST: tribal_ehr
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - ehr-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  hapi-fhir:
+    image: hapiproject/hapi:latest
+    container_name: tribal-ehr-fhir
+    environment:
+      spring.datasource.url: jdbc:postgresql://postgres:5432/tribal_ehr
+      spring.datasource.username: ehr_admin
+      spring.datasource.password: ${POSTGRES_PASSWORD:-ehr_secure_dev_2024}
+      spring.datasource.driverClassName: org.postgresql.Driver
+      spring.jpa.properties.hibernate.dialect: ca.uhn.fhir.jpa.model.dialect.HapiFhirPostgres94Dialect
+      hapi.fhir.fhir_version: R4
+      hapi.fhir.allow_multiple_delete: "true"
+      hapi.fhir.allow_external_references: "true"
+      hapi.fhir.allow_placeholder_references: "true"
+      hapi.fhir.narrative_enabled: "false"
+      hapi.fhir.mdm_enabled: "false"
+      hapi.fhir.cors.allow_Credentials: "true"
+      hapi.fhir.cors.allowed_origin: "*"
+      hapi.fhir.bulk_export_enabled: "true"
+      hapi.fhir.openapi_enabled: "true"
+      hapi.fhir.validation.requests_enabled: "false"
+      hapi.fhir.implementationguides.uscore.name: hl7.fhir.us.core
+      hapi.fhir.implementationguides.uscore.version: 6.1.0
+      hapi.fhir.implementationguides.uscore.url: "https://packages.simplifier.net/hl7.fhir.us.core/6.1.0"
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - ehr-network
+    # Note: HAPI FHIR distroless image has no shell/curl/wget, so healthcheck must be external
+    # The api service will retry connections internally
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: packages/api/Dockerfile
+    container_name: tribal-ehr-api
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 3001
+      DATABASE_URL: postgresql://ehr_admin:${POSTGRES_PASSWORD:-ehr_secure_dev_2024}@postgres:5432/tribal_ehr
+      REDIS_URL: redis://:${REDIS_PASSWORD:-ehr_redis_dev_2024}@redis:6379
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-ehr_rabbit}:${RABBITMQ_PASSWORD:-ehr_rabbit_dev_2024}@rabbitmq:5672/tribal_ehr
+      FHIR_SERVER_URL: http://hapi-fhir:8080/fhir
+      JWT_SECRET: ${JWT_SECRET:-tribal_ehr_jwt_secret_change_in_production}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      SESSION_TIMEOUT_MINUTES: 15
+      CORS_ORIGIN: http://localhost:3000
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      hapi-fhir:
+        condition: service_started
+    networks:
+      - ehr-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3001/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    volumes:
+      - ./packages/api/src:/app/src
+      - api_node_modules:/app/node_modules
+
+  frontend:
+    build:
+      context: ./packages/frontend
+      dockerfile: Dockerfile
+    # Note: frontend Dockerfile is self-contained (only needs frontend context)
+    container_name: tribal-ehr-frontend
+    environment:
+      VITE_API_URL: http://localhost:3001
+      VITE_FHIR_URL: http://localhost:8080/fhir
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - ehr-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    volumes:
+      - ./packages/frontend/src:/app/src
+      - frontend_node_modules:/app/node_modules
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:
+  api_node_modules:
+  frontend_node_modules:
+
+networks:
+  ehr-network:
+    driver: bridge
+    name: tribal-ehr-network
