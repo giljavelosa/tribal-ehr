@@ -7,6 +7,10 @@ import { authenticate, requireRole } from '../middleware/auth';
 import { auditService } from '../services/audit.service';
 import { escalationService } from '../services/escalation.service';
 import { cdsOverrideService } from '../services/cds-override.service';
+import { systemHealthService } from '../services/system-health.service';
+import { responseTimeService } from '../services/response-time.service';
+import { patientNotificationService } from '../services/patient-notification.service';
+import { responseTimeCollector } from '../middleware/response-time';
 import { logger } from '../utils/logger';
 import { NotFoundError, ValidationError } from '../utils/errors';
 
@@ -347,26 +351,17 @@ router.put(
 );
 
 // ---------------------------------------------------------------------------
-// GET /system/health - Detailed system health
+// GET /system/health - Detailed system health (real checks)
 // ---------------------------------------------------------------------------
 
 router.get(
   '/system/health',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      // In production, these would be real checks
-      const health = {
-        status: 'ok',
-        timestamp: new Date().toISOString(),
-        services: {
-          db: 'connected',
-          redis: 'connected',
-          rabbitmq: 'connected',
-          fhir: 'connected',
-        },
-        activeUsers: 0,
-        todaysEncounters: 0,
-      };
+      const health = await systemHealthService.checkAll();
+
+      // Record health check for history tracking
+      systemHealthService.recordHealthCheck(health).catch(() => {});
 
       res.json(health);
     } catch (error) {
@@ -376,22 +371,15 @@ router.get(
 );
 
 // ---------------------------------------------------------------------------
-// GET /system/health/services - Individual service health
+// GET /system/health/services - Individual service health with latency
 // ---------------------------------------------------------------------------
 
 router.get(
   '/system/health/services',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const services = [
-        { name: 'API Server', status: 'connected', latency: 1, version: '1.0.0' },
-        { name: 'Database (PostgreSQL)', status: 'connected', latency: 5 },
-        { name: 'Redis Cache', status: 'connected', latency: 2 },
-        { name: 'RabbitMQ', status: 'connected', latency: 3 },
-        { name: 'FHIR Server', status: 'connected', latency: 15 },
-      ];
-
-      res.json(services);
+      const health = await systemHealthService.checkAll();
+      res.json(health.serviceDetails);
     } catch (error) {
       next(error);
     }
@@ -406,10 +394,55 @@ router.get(
   '/system/health/fhir',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
+      const fhirHealth = await systemHealthService.checkFHIRServer();
       res.json({
-        connected: true,
+        connected: fhirHealth.status === 'connected',
         serverUrl: process.env.FHIR_SERVER_URL || 'http://localhost:8080/fhir',
         version: 'R4',
+        latencyMs: fhirHealth.latencyMs,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+// ---------------------------------------------------------------------------
+// GET /system/health/history - Health check history
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/system/health/history',
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const hours = Number(req.query.hours) || 24;
+      const history = await systemHealthService.getHealthHistory(hours);
+      res.json({ data: history });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+// ---------------------------------------------------------------------------
+// GET /system/performance - Response time metrics
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/system/performance',
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const live = responseTimeCollector.getLiveMetrics();
+      const hours = Number(req.query.hours) || 24;
+      const historical = await responseTimeService.getMetrics(hours);
+      const slow = responseTimeCollector.getSlowEndpoints(
+        Number(req.query.threshold) || 500,
+      );
+
+      res.json({
+        live,
+        historical,
+        slowEndpoints: slow,
       });
     } catch (error) {
       next(error);
@@ -617,6 +650,31 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       res.json([]);
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.get(
+  '/reports/result-notifications',
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const analytics = await patientNotificationService.getNotificationAnalytics();
+      res.json({ data: analytics });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.get(
+  '/reports/overdue-notifications',
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const thresholdDays = Number(req.query.thresholdDays) || 7;
+      const overdue = await patientNotificationService.getOverdueNotifications(thresholdDays);
+      res.json({ data: overdue });
     } catch (error) {
       next(error);
     }

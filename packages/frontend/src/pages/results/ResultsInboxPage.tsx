@@ -5,6 +5,8 @@ import {
   AlertTriangle,
   Eye,
   Filter,
+  Bell,
+  Send,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -43,8 +45,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
+import { Textarea } from '@/components/ui/textarea';
 import { usePatientContext } from '@/stores/patient-context-store';
 import { usePatientContextFromUrl } from '@/hooks/use-patient-context-url';
+import api from '@/lib/api';
 
 interface LabResult {
   id: string;
@@ -195,6 +199,12 @@ export function ResultsInboxPage() {
   const [dateTo, setDateTo] = useState('');
   const [detailResult, setDetailResult] = useState<LabResult | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [notifyOpen, setNotifyOpen] = useState(false);
+  const [notifyResult, setNotifyResult] = useState<LabResult | null>(null);
+  const [notifyMethod, setNotifyMethod] = useState('phone');
+  const [notifyNotes, setNotifyNotes] = useState('');
+  const [notifying, setNotifying] = useState(false);
+  const [notifiedIds, setNotifiedIds] = useState<Set<string>>(new Set());
 
   const unreviewedResults = useMemo(
     () => results.filter((r) => !r.reviewed),
@@ -322,6 +332,31 @@ export function ResultsInboxPage() {
     setDetailResult(result);
     setDetailOpen(true);
   };
+
+  const openNotifyDialog = (result: LabResult) => {
+    setNotifyResult(result);
+    setNotifyMethod('phone');
+    setNotifyNotes('');
+    setNotifyOpen(true);
+  };
+
+  const handleNotifyPatient = useCallback(async () => {
+    if (!notifyResult) return;
+    setNotifying(true);
+    try {
+      await api.post(`/api/v1/results-inbox/${notifyResult.id}/notify-patient`, {
+        patientId: notifyResult.patientId,
+        notificationMethod: notifyMethod,
+        notes: notifyNotes || undefined,
+      });
+      setNotifiedIds((prev) => new Set(prev).add(notifyResult.id));
+      setNotifyOpen(false);
+    } catch {
+      // Silently handle - notification endpoint may not be available
+    } finally {
+      setNotifying(false);
+    }
+  }, [notifyResult, notifyMethod, notifyNotes]);
 
   const renderFilterBar = () => (
     <div className="mb-4 flex flex-wrap items-center gap-3">
@@ -461,6 +496,24 @@ export function ResultsInboxPage() {
               >
                 Sign
               </Button>
+            )}
+            {result.reviewed && (
+              notifiedIds.has(result.id) ? (
+                <Badge variant="outline" className="bg-green-100 text-green-800">
+                  <Bell className="mr-1 h-3 w-3" />
+                  Notified
+                </Badge>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1"
+                  onClick={() => openNotifyDialog(result)}
+                >
+                  <Send className="h-3.5 w-3.5" />
+                  Notify
+                </Button>
+              )
             )}
           </div>
         </TableCell>
@@ -753,6 +806,57 @@ export function ResultsInboxPage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Notify Patient Dialog */}
+      <Dialog open={notifyOpen} onOpenChange={setNotifyOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Notify Patient of Result</DialogTitle>
+            <DialogDescription>
+              Record how the patient was notified of: {notifyResult?.test}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Notification Method</Label>
+              <Select value={notifyMethod} onValueChange={setNotifyMethod}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="phone">Phone Call</SelectItem>
+                  <SelectItem value="portal">Patient Portal</SelectItem>
+                  <SelectItem value="in-person">In Person</SelectItem>
+                  <SelectItem value="mail">Mail</SelectItem>
+                  <SelectItem value="email">Email</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Notes (optional)</Label>
+              <Textarea
+                rows={3}
+                placeholder="Any details about the notification..."
+                value={notifyNotes}
+                onChange={(e) => setNotifyNotes(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNotifyOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={notifying}
+              onClick={handleNotifyPatient}
+              className="gap-1"
+            >
+              <Send className="h-4 w-4" />
+              {notifying ? 'Recording...' : 'Record Notification'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Result Detail Dialog */}
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>

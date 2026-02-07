@@ -11,6 +11,7 @@
 
 import { Router, Request, Response, NextFunction } from 'express';
 import { orderService } from '../services/order.service';
+import { patientNotificationService } from '../services/patient-notification.service';
 import { authenticate } from '../middleware/auth';
 
 const router = Router();
@@ -141,6 +142,44 @@ router.post(
       next(error);
     }
   }
+);
+
+// ---------------------------------------------------------------------------
+// Notify Patient of Result (SAFER 4 - Practice 3.2)
+// ---------------------------------------------------------------------------
+router.post(
+  '/:id/notify-patient',
+  authenticate,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const notification = await patientNotificationService.recordNotification({
+        orderId: req.params.id,
+        patientId: req.body.patientId,
+        notificationMethod: req.body.notificationMethod,
+        notifiedBy: req.user!.id,
+        notes: req.body.notes,
+      });
+      res.status(201).json({ data: notification });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Get Patient Notifications for a Result
+// ---------------------------------------------------------------------------
+router.get(
+  '/:id/patient-notifications',
+  authenticate,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const notifications = await patientNotificationService.getNotificationsForOrder(req.params.id);
+      res.json({ data: notifications });
+    } catch (error) {
+      next(error);
+    }
+  },
 );
 
 export default router;

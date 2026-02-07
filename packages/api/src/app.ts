@@ -46,6 +46,10 @@ import cdsHooksRouter from './routes/cds-hooks';
 import delegationsRouter from './routes/delegations';
 import resultsInboxRouter from './routes/results-inbox';
 import orderSetsRouter from './routes/order-sets';
+import trainingRouter from './routes/training';
+import safetyIncidentsRouter from './routes/safety-incidents';
+import saferAssessmentsRouter from './routes/safer-assessments';
+import { responseTimeMiddleware, responseTimeCollector } from './middleware/response-time';
 
 // Morgan custom format that excludes PHI - only log method, url, status, response time
 const morganFormat = ':method :url :status :response-time ms - :res[content-length]';
@@ -135,6 +139,10 @@ export function createApp(): express.Application {
     },
     skip: (req: Request) => req.path === '/health',
   }));
+
+  // Response time monitoring (SAFER Guide 7)
+  app.use(responseTimeMiddleware);
+  responseTimeCollector.start();
 
   // General rate limiting
   app.use(generalLimiter);
@@ -268,6 +276,9 @@ export function createApp(): express.Application {
   app.use('/api/v1/delegations', delegationsRouter);
   app.use('/api/v1/results-inbox', resultsInboxRouter);
   app.use('/api/v1/order-sets', orderSetsRouter);
+  app.use('/api/v1/training', trainingRouter);
+  app.use('/api/v1/safety-incidents', safetyIncidentsRouter);
+  app.use('/api/v1/safer-assessments', saferAssessmentsRouter);
 
   // 404 handler
   app.use(notFoundHandler);

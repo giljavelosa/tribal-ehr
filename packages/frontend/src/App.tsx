@@ -31,6 +31,9 @@ import { SystemConfigPage } from '@/pages/admin/SystemConfigPage';
 import { ProviderDirectoryPage } from '@/pages/admin/ProviderDirectoryPage';
 import { ReportsPage } from '@/pages/admin/ReportsPage';
 import { LocationManagementPage } from '@/pages/admin/LocationManagementPage';
+import { TrainingPage } from '@/pages/admin/TrainingPage';
+import { SafetyIncidentsPage } from '@/pages/admin/SafetyIncidentsPage';
+import { SaferAssessmentPage } from '@/pages/admin/SaferAssessmentPage';
 
 // Patient portal pages
 import { PatientPortalLayout } from '@/pages/portal/PatientPortalLayout';
@@ -126,6 +129,9 @@ function AppRoutes() {
           <Route path="providers" element={<ProviderDirectoryPage />} />
           <Route path="reports" element={<ReportsPage />} />
           <Route path="locations" element={<LocationManagementPage />} />
+          <Route path="training" element={<TrainingPage />} />
+          <Route path="safety-incidents" element={<SafetyIncidentsPage />} />
+          <Route path="safer-assessment" element={<SaferAssessmentPage />} />
         </Route>
       </Route>
 

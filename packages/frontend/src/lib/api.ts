@@ -66,8 +66,11 @@ api.interceptors.response.use(
     }
 
     // Transform error for consistent handling
+    // API returns errors as { error: { code, message } }
+    const responseData = error.response?.data as { error?: { message?: string }; message?: string } | undefined;
     const message =
-      (error.response?.data as { message?: string })?.message ||
+      responseData?.error?.message ||
+      responseData?.message ||
       error.message ||
       'An unexpected error occurred';
 

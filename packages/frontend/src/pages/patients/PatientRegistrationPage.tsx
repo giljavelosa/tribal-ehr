@@ -349,10 +349,93 @@ export function PatientRegistrationPage() {
 
         const created = await createPatient.mutateAsync(patientData);
         navigate(`/patients/${created.id}`);
-      } catch {
+      } catch (error: unknown) {
+        // Handle 409 duplicate patient detection from server-side check
+        const axiosError = error as { response?: { status?: number; data?: { matches?: SimilarPatientResult[] } } };
+        if (axiosError?.response?.status === 409 && axiosError.response.data?.matches) {
+          setSimilarPatients(axiosError.response.data.matches);
+          setShowSimilarAlert(true);
+          setSubmitError('Potential duplicate patients detected. Review matches below or click "Create Anyway".');
+          return;
+        }
         setSubmitError(
           'Failed to register patient. Please try again.',
         );
+      }
+    },
+    [createPatient, navigate],
+  );
+
+  const onSubmitWithBypass = useCallback(
+    async (data: RegistrationFormData) => {
+      setSubmitError(null);
+      setSimilarPatients([]);
+      setShowSimilarAlert(false);
+      try {
+        const emergencyContacts = [
+          {
+            name: data.emergencyContact1Name,
+            phone: data.emergencyContact1Phone,
+            relationship: data.emergencyContact1Relationship,
+          },
+        ];
+        if (data.emergencyContact2Name && data.emergencyContact2Phone) {
+          emergencyContacts.push({
+            name: data.emergencyContact2Name,
+            phone: data.emergencyContact2Phone,
+            relationship: data.emergencyContact2Relationship || 'Other',
+          });
+        }
+
+        const patientData = {
+          firstName: data.firstName,
+          lastName: data.lastName,
+          middleName: data.middleName || undefined,
+          dob: data.dob,
+          gender: data.gender,
+          sex: data.sex,
+          genderIdentity: data.genderIdentity && GENDER_IDENTITY_MAP[data.genderIdentity]
+            ? { coding: [GENDER_IDENTITY_MAP[data.genderIdentity]], text: GENDER_IDENTITY_MAP[data.genderIdentity].display }
+            : undefined,
+          sexualOrientation: data.sexualOrientation && SEXUAL_ORIENTATION_MAP[data.sexualOrientation]
+            ? { coding: [SEXUAL_ORIENTATION_MAP[data.sexualOrientation]], text: SEXUAL_ORIENTATION_MAP[data.sexualOrientation].display }
+            : undefined,
+          race: data.race && RACE_CODE_MAP[data.race]
+            ? [RACE_CODE_MAP[data.race]]
+            : undefined,
+          ethnicity: data.ethnicity && ETHNICITY_CODE_MAP[data.ethnicity]
+            ? { coding: [ETHNICITY_CODE_MAP[data.ethnicity]], text: ETHNICITY_CODE_MAP[data.ethnicity].display }
+            : undefined,
+          preferredLanguage: data.preferredLanguage || undefined,
+          maritalStatus: data.maritalStatus || undefined,
+          phone: data.phone,
+          email: data.email || undefined,
+          address: {
+            line1: data.addressLine1,
+            line2: data.addressLine2 || undefined,
+            city: data.city,
+            state: data.state,
+            postalCode: data.postalCode,
+          },
+          emergencyContacts,
+          insurance: data.insurancePlan
+            ? {
+                plan: data.insurancePlan,
+                memberId: data.memberId || '',
+                groupNumber: data.groupNumber || undefined,
+                subscriberName: data.subscriberName || undefined,
+                subscriberDob: data.subscriberDob || undefined,
+                subscriberRelation: data.subscriberRelation || undefined,
+              }
+            : undefined,
+          status: 'active' as const,
+          bypassDuplicateCheck: true,
+        };
+
+        const created = await createPatient.mutateAsync(patientData);
+        navigate(`/patients/${created.id}`);
+      } catch {
+        setSubmitError('Failed to register patient. Please try again.');
       }
     },
     [createPatient, navigate],
@@ -438,17 +521,30 @@ export function PatientRegistrationPage() {
       )}
 
       {showSimilarAlert && similarPatients.length > 0 && (
-        <SimilarPatientsAlert
-          patients={similarPatients}
-          onSelect={(patientId) => {
-            navigate(`/patients/${patientId}`);
-          }}
-          onDismiss={() => {
-            setShowSimilarAlert(false);
-            setSimilarPatients([]);
-            setCurrentStep((s) => Math.min(s + 1, 5));
-          }}
-        />
+        <div className="space-y-2">
+          <SimilarPatientsAlert
+            patients={similarPatients}
+            onSelect={(patientId) => {
+              navigate(`/patients/${patientId}`);
+            }}
+            onDismiss={() => {
+              setShowSimilarAlert(false);
+              setSimilarPatients([]);
+              setCurrentStep((s) => Math.min(s + 1, 5));
+            }}
+          />
+          {currentStep === 5 && (
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full border-destructive text-destructive hover:bg-destructive/10"
+              onClick={handleSubmit(onSubmitWithBypass)}
+              disabled={isSubmitting}
+            >
+              Create Anyway (Bypass Duplicate Check)
+            </Button>
+          )}
+        </div>
       )}
 
       <form onSubmit={handleSubmit(onSubmit)}>

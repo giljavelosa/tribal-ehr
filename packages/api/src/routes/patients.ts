@@ -300,6 +300,51 @@ router.post(
   validate(createPatientSchema),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
+      // SAFER Guide 6 - Duplicate detection before patient creation
+      if (!req.body.bypassDuplicateCheck) {
+        try {
+          const similar = await patientMatchingService.findSimilarPatients({
+            firstName: req.body.firstName,
+            lastName: req.body.lastName,
+            dateOfBirth: req.body.dob || req.body.dateOfBirth,
+            sex: req.body.sex,
+          });
+
+          const highConfidenceMatches = similar.filter(
+            (m: { confidence: number }) => m.confidence >= 70,
+          );
+
+          if (highConfidenceMatches.length > 0) {
+            return res.status(409).json({
+              error: {
+                code: 'DUPLICATE_PATIENT_DETECTED',
+                message: 'Potential duplicate patients found. Review matches or set bypassDuplicateCheck to proceed.',
+              },
+              matches: highConfidenceMatches,
+            });
+          }
+        } catch {
+          // If duplicate check fails, allow creation to proceed
+          logger.warn('Duplicate patient check failed, proceeding with creation');
+        }
+      } else {
+        // Log the bypass for audit
+        auditService.log({
+          userId: req.user!.id,
+          userRole: req.user!.role,
+          ipAddress: req.ip || 'unknown',
+          action: 'CREATE',
+          resourceType: 'Patient',
+          resourceId: 'duplicate-bypass',
+          endpoint: req.originalUrl,
+          method: 'POST',
+          statusCode: 200,
+          clinicalContext: 'Duplicate check bypassed by user',
+          sessionId: req.user!.sessionId,
+          userAgent: req.headers['user-agent'],
+        });
+      }
+
       const agentDisplay = `${req.user!.email}`;
       const patient = await patientService.create(req.body, req.user!.id, agentDisplay);
 

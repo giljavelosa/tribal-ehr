@@ -12,6 +12,9 @@ import {
   Stethoscope,
   Loader2,
   AlertCircle,
+  GraduationCap,
+  AlertTriangle,
+  ClipboardCheck,
 } from 'lucide-react';
 import {
   Card,
@@ -53,6 +56,9 @@ const adminNavItems = [
   { to: '/admin/audit', icon: Shield, label: 'Audit Log' },
   { to: '/admin/config', icon: Settings, label: 'Configuration' },
   { to: '/admin/reports', icon: BarChart3, label: 'Reports' },
+  { to: '/admin/training', icon: GraduationCap, label: 'Training' },
+  { to: '/admin/safety-incidents', icon: AlertTriangle, label: 'Safety' },
+  { to: '/admin/safer-assessment', icon: ClipboardCheck, label: 'SAFER' },
 ];
 
 function AdminDashboard() {
