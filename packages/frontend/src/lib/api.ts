@@ -1,5 +1,22 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 
+/**
+ * Custom error class for 403 responses that require break-glass override.
+ * The frontend can check `instanceof BreakGlassRequiredError` to trigger
+ * the break-glass dialog flow.
+ */
+export class BreakGlassRequiredError extends Error {
+  public readonly patientId: string;
+  public readonly originalUrl: string;
+
+  constructor(message: string, patientId: string, originalUrl: string) {
+    super(message);
+    this.name = 'BreakGlassRequiredError';
+    this.patientId = patientId;
+    this.originalUrl = originalUrl;
+  }
+}
+
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || '/api/v1',
   headers: {
@@ -62,6 +79,29 @@ api.interceptors.response.use(
         // No refresh token, redirect to login
         localStorage.removeItem('tribal-ehr-token');
         window.location.href = '/login';
+      }
+    }
+
+    // Handle 403 with break-glass required
+    if (error.response?.status === 403) {
+      const responseData = error.response?.data as {
+        error?: string;
+        message?: string;
+        requiresBreakGlass?: boolean;
+      } | undefined;
+
+      if (responseData?.requiresBreakGlass) {
+        // Extract patient ID from the URL (patterns like /patients/:id/...)
+        const urlMatch = originalRequest.url?.match(/\/patients\/([^/]+)/);
+        const patientId = urlMatch?.[1] || '';
+
+        return Promise.reject(
+          new BreakGlassRequiredError(
+            responseData.message || 'Emergency access override required',
+            patientId,
+            originalRequest.url || '',
+          ),
+        );
       }
     }
 

@@ -40,6 +40,7 @@ import {
   usePatients,
   type PatientSearchParams,
 } from '@/hooks/use-api';
+import { useDebounce } from '@/hooks/use-debounce';
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
 
@@ -54,17 +55,23 @@ export function PatientListPage() {
   const [pageSize, setPageSize] = useState(25);
   const [showAdvancedSearch, setShowAdvancedSearch] = useState(false);
 
+  // Debounce search inputs to avoid excessive API calls on every keystroke
+  const debouncedName = useDebounce(nameSearch, 300);
+  const debouncedMrn = useDebounce(mrnSearch, 300);
+  const debouncedDob = useDebounce(dobSearch, 300);
+  const debouncedPhone = useDebounce(phoneSearch, 300);
+
   const searchParams: PatientSearchParams = useMemo(() => {
     const params: PatientSearchParams = {
       page,
       limit: pageSize,
     };
-    if (nameSearch.trim()) params.name = nameSearch.trim();
-    if (mrnSearch.trim()) params.mrn = mrnSearch.trim();
-    if (dobSearch) params.dob = dobSearch;
-    if (phoneSearch.trim()) params.phone = phoneSearch.trim();
+    if (debouncedName.trim()) params.name = debouncedName.trim();
+    if (debouncedMrn.trim()) params.mrn = debouncedMrn.trim();
+    if (debouncedDob) params.dob = debouncedDob;
+    if (debouncedPhone.trim()) params.phone = debouncedPhone.trim();
     return params;
-  }, [nameSearch, mrnSearch, dobSearch, phoneSearch, page, pageSize]);
+  }, [debouncedName, debouncedMrn, debouncedDob, debouncedPhone, page, pageSize]);
 
   const { data, isLoading, error } = usePatients(searchParams);
 
@@ -136,7 +143,7 @@ export function PatientListPage() {
           <div className="mb-4 space-y-3">
             <div className="flex flex-wrap items-end gap-3">
               <div className="relative min-w-[250px] flex-1">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
                 <Input
                   placeholder="Search by patient name..."
                   value={nameSearch}
@@ -146,6 +153,7 @@ export function PatientListPage() {
                   }}
                   onKeyDown={handleKeyDown}
                   className="pl-9"
+                  aria-label="Search by patient name"
                 />
               </div>
               <Button
@@ -221,7 +229,7 @@ export function PatientListPage() {
 
           {/* Loading State */}
           {isLoading ? (
-            <div className="space-y-3">
+            <div className="space-y-3" role="status" aria-label="Loading patients">
               {Array.from({ length: 5 }).map((_, i) => (
                 <div
                   key={i}
@@ -232,7 +240,7 @@ export function PatientListPage() {
           ) : (
             <>
               {/* Results Table */}
-              <Table>
+              <Table aria-label="Patient directory">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Patient</TableHead>
@@ -361,6 +369,7 @@ export function PatientListPage() {
                       disabled={page <= 1}
                       onClick={() => setPage(1)}
                       title="First page"
+                      aria-label="First page"
                     >
                       <ChevronsLeft className="h-4 w-4" />
                     </Button>
@@ -371,6 +380,7 @@ export function PatientListPage() {
                       disabled={page <= 1}
                       onClick={() => setPage((p) => Math.max(1, p - 1))}
                       title="Previous page"
+                      aria-label="Previous page"
                     >
                       <ChevronLeft className="h-4 w-4" />
                     </Button>
@@ -386,6 +396,7 @@ export function PatientListPage() {
                         setPage((p) => Math.min(totalPages, p + 1))
                       }
                       title="Next page"
+                      aria-label="Next page"
                     >
                       <ChevronRight className="h-4 w-4" />
                     </Button>
@@ -396,6 +407,7 @@ export function PatientListPage() {
                       disabled={page >= totalPages}
                       onClick={() => setPage(totalPages)}
                       title="Last page"
+                      aria-label="Last page"
                     >
                       <ChevronsRight className="h-4 w-4" />
                     </Button>

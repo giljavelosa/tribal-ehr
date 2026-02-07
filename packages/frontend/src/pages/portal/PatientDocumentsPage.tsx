@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   FileText,
@@ -10,6 +10,7 @@ import {
   File,
   Calendar,
   User,
+  Printer,
 } from 'lucide-react';
 import {
   Card,
@@ -29,6 +30,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Separator } from '@/components/ui/separator';
+import { toast } from '@/components/ui/toast';
 import api from '@/lib/api';
 
 interface PatientDocument {
@@ -42,7 +44,28 @@ interface PatientDocument {
   status: string;
 }
 
+interface HealthSummaryExport {
+  generatedAt: string;
+  demographics: {
+    firstName: string;
+    lastName: string;
+    dateOfBirth: string;
+    gender: string;
+    mrn: string;
+  };
+  allergies: Array<{ substance: string; reaction: string; criticality: string }>;
+  medications: Array<{ name: string; dosage: string; status: string }>;
+  conditions: Array<{ name: string; status: string; onsetDate: string | null }>;
+  immunizations: Array<{ vaccine: string; date: string | null; status: string }>;
+  recentVitals: Array<{ name: string; value: string; date: string | null }>;
+  recentLabs: Array<{ name: string; value: string; date: string | null; referenceRange: string | null }>;
+}
+
 export function PatientDocumentsPage() {
+  const [downloadingCCDA, setDownloadingCCDA] = useState(false);
+  const [downloadingFHIR, setDownloadingFHIR] = useState(false);
+  const [loadingPrint, setLoadingPrint] = useState(false);
+
   const { data: documents, isLoading, error } = useQuery({
     queryKey: ['portal', 'documents'],
     queryFn: async () => {
@@ -51,6 +74,8 @@ export function PatientDocumentsPage() {
     },
     staleTime: 5 * 60 * 1000,
   });
+
+  const todayStamp = new Date().toISOString().slice(0, 10);
 
   const handleDownload = async (doc: PatientDocument) => {
     try {
@@ -71,43 +96,145 @@ export function PatientDocumentsPage() {
       link.remove();
       window.URL.revokeObjectURL(url);
     } catch {
-      // Silent failure; user sees that download did not initiate
+      toast({
+        title: 'Download failed',
+        description: 'Unable to download this document. Please try again.',
+        variant: 'destructive',
+      });
     }
   };
 
   const handleExportCCDA = async () => {
     try {
+      setDownloadingCCDA(true);
       const response = await api.get('/api/v1/portal/me/export/ccda', {
         responseType: 'blob',
       });
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', 'complete-health-record.xml');
+      link.setAttribute('download', `health-record-${todayStamp}.xml`);
       document.body.appendChild(link);
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
     } catch {
-      // Silent failure
+      toast({
+        title: 'Export failed',
+        description: 'Unable to export your health record as C-CDA. Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setDownloadingCCDA(false);
     }
   };
 
   const handleExportFHIR = async () => {
     try {
+      setDownloadingFHIR(true);
       const response = await api.get('/api/v1/portal/me/export/fhir', {
         responseType: 'blob',
       });
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', 'complete-health-record.json');
+      link.setAttribute('download', `health-record-${todayStamp}.json`);
       document.body.appendChild(link);
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
     } catch {
-      // Silent failure
+      toast({
+        title: 'Export failed',
+        description: 'Unable to export your health record as FHIR JSON. Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setDownloadingFHIR(false);
+    }
+  };
+
+  const handlePrintSummary = async () => {
+    try {
+      setLoadingPrint(true);
+      const response = await api.get<{ data: HealthSummaryExport }>('/api/v1/portal/me/export/pdf');
+      const summary = response.data.data;
+
+      const printWindow = window.open('', '_blank');
+      if (!printWindow) {
+        toast({
+          title: 'Pop-up blocked',
+          description: 'Please allow pop-ups to print your health summary.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      const buildTableRows = (items: Array<Record<string, string | null>>, keys: string[]): string =>
+        items
+          .map(
+            (item) =>
+              `<tr>${keys.map((k) => `<td style="padding:6px 12px;border:1px solid #ddd;">${item[k] ?? '--'}</td>`).join('')}</tr>`,
+          )
+          .join('');
+
+      const html = `<!DOCTYPE html>
+<html><head><title>Health Summary - ${summary.demographics.firstName} ${summary.demographics.lastName}</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 20px; color: #333; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  h2 { font-size: 16px; margin-top: 24px; border-bottom: 2px solid #2563eb; padding-bottom: 4px; color: #2563eb; }
+  .subtitle { color: #666; font-size: 13px; margin-bottom: 16px; }
+  .demo-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 24px; margin-bottom: 12px; }
+  .demo-grid dt { font-weight: bold; font-size: 13px; }
+  .demo-grid dd { margin: 0; font-size: 13px; }
+  table { border-collapse: collapse; width: 100%; margin-top: 8px; font-size: 13px; }
+  th { background: #f3f4f6; text-align: left; padding: 6px 12px; border: 1px solid #ddd; font-weight: 600; }
+  td { padding: 6px 12px; border: 1px solid #ddd; }
+  .empty { color: #999; font-style: italic; padding: 12px 0; }
+  @media print { body { margin: 0; } }
+</style></head><body>
+<h1>Patient Health Summary</h1>
+<p class="subtitle">Generated on ${new Date(summary.generatedAt).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+<h2>Demographics</h2>
+<dl class="demo-grid">
+  <dt>Name</dt><dd>${summary.demographics.firstName} ${summary.demographics.lastName}</dd>
+  <dt>Date of Birth</dt><dd>${summary.demographics.dateOfBirth ? new Date(summary.demographics.dateOfBirth).toLocaleDateString() : '--'}</dd>
+  <dt>Gender</dt><dd>${summary.demographics.gender || '--'}</dd>
+  <dt>MRN</dt><dd>${summary.demographics.mrn || '--'}</dd>
+</dl>
+
+<h2>Allergies</h2>
+${summary.allergies.length === 0 ? '<p class="empty">No known allergies</p>' : `<table><thead><tr><th>Substance</th><th>Reaction</th><th>Criticality</th></tr></thead><tbody>${buildTableRows(summary.allergies, ['substance', 'reaction', 'criticality'])}</tbody></table>`}
+
+<h2>Medications</h2>
+${summary.medications.length === 0 ? '<p class="empty">No active medications</p>' : `<table><thead><tr><th>Medication</th><th>Dosage</th><th>Status</th></tr></thead><tbody>${buildTableRows(summary.medications, ['name', 'dosage', 'status'])}</tbody></table>`}
+
+<h2>Conditions</h2>
+${summary.conditions.length === 0 ? '<p class="empty">No active conditions</p>' : `<table><thead><tr><th>Condition</th><th>Status</th><th>Onset Date</th></tr></thead><tbody>${buildTableRows(summary.conditions, ['name', 'status', 'onsetDate'])}</tbody></table>`}
+
+<h2>Immunizations</h2>
+${summary.immunizations.length === 0 ? '<p class="empty">No immunization records</p>' : `<table><thead><tr><th>Vaccine</th><th>Date</th><th>Status</th></tr></thead><tbody>${buildTableRows(summary.immunizations, ['vaccine', 'date', 'status'])}</tbody></table>`}
+
+<h2>Recent Vital Signs</h2>
+${summary.recentVitals.length === 0 ? '<p class="empty">No recent vitals</p>' : `<table><thead><tr><th>Measurement</th><th>Value</th><th>Date</th></tr></thead><tbody>${buildTableRows(summary.recentVitals, ['name', 'value', 'date'])}</tbody></table>`}
+
+<h2>Recent Lab Results</h2>
+${summary.recentLabs.length === 0 ? '<p class="empty">No recent labs</p>' : `<table><thead><tr><th>Test</th><th>Value</th><th>Date</th><th>Reference Range</th></tr></thead><tbody>${buildTableRows(summary.recentLabs, ['name', 'value', 'date', 'referenceRange'])}</tbody></table>`}
+
+<script>window.onload = function() { window.print(); }</script>
+</body></html>`;
+
+      printWindow.document.write(html);
+      printWindow.document.close();
+    } catch {
+      toast({
+        title: 'Print failed',
+        description: 'Unable to load your health summary for printing. Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setLoadingPrint(false);
     }
   };
 
@@ -167,23 +294,54 @@ export function PatientDocumentsPage() {
         </div>
       </div>
 
-      {/* Export all records */}
+      {/* Download My Health Data */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Export All Records</CardTitle>
+          <CardTitle className="text-lg">Download My Health Data</CardTitle>
           <CardDescription>
-            Download your complete health record in standard formats
+            Download your complete health record in standard formats or print a summary
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-3">
-            <Button variant="outline" className="gap-2" onClick={handleExportCCDA}>
-              <FileCode className="h-4 w-4" aria-hidden="true" />
-              Export as C-CDA (XML)
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={handleExportCCDA}
+              disabled={downloadingCCDA}
+            >
+              {downloadingCCDA ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <FileCode className="h-4 w-4" aria-hidden="true" />
+              )}
+              Download Health Summary (C-CDA)
             </Button>
-            <Button variant="outline" className="gap-2" onClick={handleExportFHIR}>
-              <FileJson className="h-4 w-4" aria-hidden="true" />
-              Export as FHIR JSON Bundle
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={handleExportFHIR}
+              disabled={downloadingFHIR}
+            >
+              {downloadingFHIR ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <FileJson className="h-4 w-4" aria-hidden="true" />
+              )}
+              Download Health Data (FHIR JSON)
+            </Button>
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={handlePrintSummary}
+              disabled={loadingPrint}
+            >
+              {loadingPrint ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <Printer className="h-4 w-4" aria-hidden="true" />
+              )}
+              Print Health Summary
             </Button>
           </div>
         </CardContent>

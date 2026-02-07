@@ -8,6 +8,8 @@ import {
   FileImage,
   Stethoscope,
   ClipboardList,
+  Loader2,
+  AlertCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -47,110 +49,104 @@ import {
 } from '@/components/ui/select';
 import { usePatientContext } from '@/stores/patient-context-store';
 import { usePatientContextFromUrl } from '@/hooks/use-patient-context-url';
+import { useDebounce } from '@/hooks/use-debounce';
+import { toast } from '@/components/ui/toast';
+import {
+  useProviderOrders,
+  useSignOrder,
+  useCreateMedicationOrder,
+  useCreateLabOrder,
+  useCreateImagingOrder,
+  type ProviderOrder,
+} from '@/hooks/use-api';
 
-interface ProviderOrder {
+type OrderTypeLabel = 'Lab' | 'Imaging' | 'Medication' | 'Referral' | 'Procedure';
+type StatusLabel = 'Pending Signature' | 'Active' | 'Completed' | 'Cancelled';
+type PriorityLabel = 'Routine' | 'Urgent' | 'STAT';
+
+function mapOrderType(apiType: string): OrderTypeLabel {
+  const mapping: Record<string, OrderTypeLabel> = {
+    laboratory: 'Lab',
+    imaging: 'Imaging',
+    medication: 'Medication',
+    referral: 'Referral',
+    procedure: 'Procedure',
+  };
+  return mapping[apiType] || 'Procedure';
+}
+
+function mapStatus(apiStatus: string): StatusLabel {
+  const mapping: Record<string, StatusLabel> = {
+    draft: 'Pending Signature',
+    active: 'Active',
+    completed: 'Completed',
+    cancelled: 'Cancelled',
+    'on-hold': 'Active',
+    'entered-in-error': 'Cancelled',
+  };
+  return mapping[apiStatus] || 'Active';
+}
+
+function mapPriority(apiPriority: string): PriorityLabel {
+  const mapping: Record<string, PriorityLabel> = {
+    routine: 'Routine',
+    urgent: 'Urgent',
+    stat: 'STAT',
+    asap: 'Urgent',
+  };
+  return mapping[apiPriority] || 'Routine';
+}
+
+function mapApiOrderTypeBack(label: string): 'medication' | 'laboratory' | 'imaging' {
+  const mapping: Record<string, 'medication' | 'laboratory' | 'imaging'> = {
+    Lab: 'laboratory',
+    Imaging: 'imaging',
+    Medication: 'medication',
+  };
+  return mapping[label] || 'laboratory';
+}
+
+function mapPriorityBack(label: string): 'routine' | 'urgent' | 'stat' {
+  const mapping: Record<string, 'routine' | 'urgent' | 'stat'> = {
+    Routine: 'routine',
+    Urgent: 'urgent',
+    STAT: 'stat',
+  };
+  return mapping[label] || 'routine';
+}
+
+interface DisplayOrder {
   id: string;
   patient: string;
   patientId: string;
-  type: 'Lab' | 'Imaging' | 'Medication' | 'Referral' | 'Procedure';
+  type: OrderTypeLabel;
   description: string;
-  status: 'Pending Signature' | 'Active' | 'Completed' | 'Cancelled';
+  status: StatusLabel;
   ordered: string;
   provider: string;
-  priority: 'Routine' | 'Urgent' | 'STAT';
+  priority: PriorityLabel;
   note?: string;
 }
 
-const mockOrders: ProviderOrder[] = [
-  {
-    id: 'ORD-001',
-    patient: 'John Smith',
-    patientId: 'P-003',
-    type: 'Lab',
-    description: 'Basic Metabolic Panel',
-    status: 'Pending Signature',
-    ordered: '2024-01-12',
-    provider: 'Dr. Wilson',
-    priority: 'Routine',
-  },
-  {
-    id: 'ORD-002',
-    patient: 'Mary Johnson',
-    patientId: 'P-002',
-    type: 'Lab',
-    description: 'CBC with Differential',
-    status: 'Completed',
-    ordered: '2024-01-11',
-    provider: 'Dr. Wilson',
-    priority: 'Routine',
-  },
-  {
-    id: 'ORD-003',
-    patient: 'Robert Williams',
-    patientId: 'P-001',
-    type: 'Imaging',
-    description: 'Chest X-Ray PA/Lateral',
-    status: 'Active',
-    ordered: '2024-01-12',
-    provider: 'Dr. Wilson',
-    priority: 'Urgent',
-  },
-  {
-    id: 'ORD-004',
-    patient: 'Sarah Davis',
-    patientId: 'P-004',
-    type: 'Referral',
-    description: 'Cardiology Consultation',
-    status: 'Pending Signature',
-    ordered: '2024-01-10',
-    provider: 'Dr. Wilson',
-    priority: 'Routine',
-  },
-  {
-    id: 'ORD-005',
-    patient: 'James Brown',
-    patientId: 'P-005',
-    type: 'Lab',
-    description: 'HbA1c, Lipid Panel',
-    status: 'Pending Signature',
-    ordered: '2024-01-12',
-    provider: 'Dr. Wilson',
-    priority: 'Routine',
-  },
-  {
-    id: 'ORD-006',
-    patient: 'Patricia Clark',
-    patientId: 'P-006',
-    type: 'Medication',
-    description: 'Levothyroxine 50mcg',
-    status: 'Active',
-    ordered: '2024-01-10',
-    provider: 'Dr. Wilson',
-    priority: 'Routine',
-  },
-  {
-    id: 'ORD-007',
-    patient: 'Robert Williams',
-    patientId: 'P-001',
-    type: 'Lab',
-    description: 'Troponin I (STAT)',
-    status: 'Active',
-    ordered: '2024-01-12',
-    provider: 'Dr. Wilson',
-    priority: 'STAT',
-  },
-  {
-    id: 'ORD-008',
-    patient: 'Michael Wilson',
-    patientId: 'P-007',
-    type: 'Procedure',
-    description: 'EKG 12-Lead',
-    status: 'Completed',
-    ordered: '2024-01-09',
-    provider: 'Dr. Wilson',
-    priority: 'Routine',
-  },
-];
+function toDisplayOrder(order: ProviderOrder): DisplayOrder {
+  const details = order.orderDetails || {};
+  const displayName =
+    order.codeDisplay ||
+    (details as Record<string, unknown>).displayName as string ||
+    'Order';
+  return {
+    id: order.id,
+    patient: order.patientId,
+    patientId: order.patientId,
+    type: mapOrderType(order.orderType),
+    description: displayName,
+    status: mapStatus(order.status),
+    ordered: order.orderedAt ? order.orderedAt.slice(0, 10) : '',
+    provider: order.orderedBy || '',
+    priority: mapPriority(order.priority),
+    note: order.notes,
+  };
+}
 
 const typeIcons: Record<string, React.ElementType> = {
   Lab: FlaskConical,
@@ -184,16 +180,23 @@ const statusColors: Record<string, string> = {
 };
 
 export function OrdersPage() {
-  const [orders, setOrders] = useState<ProviderOrder[]>(mockOrders);
   const [searchQuery, setSearchQuery] = useState('');
   const [newOrderDialogOpen, setNewOrderDialogOpen] = useState(false);
   const activePatient = usePatientContext((s) => s.activePatient);
   usePatientContextFromUrl();
+
+  const { data: apiOrders, isLoading, error } = useProviderOrders();
+  const signOrderMutation = useSignOrder();
+  const createMedicationOrder = useCreateMedicationOrder();
+  const createLabOrder = useCreateLabOrder();
+  const createImagingOrder = useCreateImagingOrder();
+
   const [newOrderForm, setNewOrderForm] = useState({
     patient: '',
-    type: 'Lab' as ProviderOrder['type'],
+    patientId: '',
+    type: 'Lab' as OrderTypeLabel,
     description: '',
-    priority: 'Routine' as ProviderOrder['priority'],
+    priority: 'Routine' as PriorityLabel,
     note: '',
   });
 
@@ -203,9 +206,15 @@ export function OrdersPage() {
       setNewOrderForm((prev) => ({
         ...prev,
         patient: `${activePatient.lastName}, ${activePatient.firstName}`,
+        patientId: activePatient.id,
       }));
     }
   }, [newOrderDialogOpen, activePatient]);
+
+  const orders: DisplayOrder[] = useMemo(
+    () => (apiOrders || []).map(toDisplayOrder),
+    [apiOrders],
+  );
 
   const pendingOrders = useMemo(
     () => orders.filter((o) => o.status === 'Pending Signature'),
@@ -216,10 +225,13 @@ export function OrdersPage() {
     [orders],
   );
 
+  // Debounce search to avoid excessive filtering on large order lists
+  const debouncedSearchQuery = useDebounce(searchQuery, 200);
+
   const filterOrders = useCallback(
-    (list: ProviderOrder[]) => {
-      if (!searchQuery) return list;
-      const q = searchQuery.toLowerCase();
+    (list: DisplayOrder[]) => {
+      if (!debouncedSearchQuery) return list;
+      const q = debouncedSearchQuery.toLowerCase();
       return list.filter(
         (o) =>
           o.patient.toLowerCase().includes(q) ||
@@ -228,49 +240,119 @@ export function OrdersPage() {
           o.id.toLowerCase().includes(q),
       );
     },
-    [searchQuery],
+    [debouncedSearchQuery],
   );
 
-  const signOrder = useCallback((id: string) => {
-    setOrders((prev) =>
-      prev.map((o) =>
-        o.id === id ? { ...o, status: 'Active' as const } : o,
-      ),
-    );
-  }, []);
+  const handleSignOrder = useCallback(
+    (id: string) => {
+      signOrderMutation.mutate(id, {
+        onSuccess: () => {
+          toast({ title: 'Order signed successfully' });
+        },
+        onError: (err: Error) => {
+          toast({
+            title: 'Failed to sign order',
+            description: err.message,
+            variant: 'destructive',
+          });
+        },
+      });
+    },
+    [signOrderMutation],
+  );
 
   const handleNewOrder = useCallback(() => {
-    if (!newOrderForm.patient || !newOrderForm.description) return;
-    const newOrder: ProviderOrder = {
-      id: `ORD-${String(orders.length + 1).padStart(3, '0')}`,
-      patient: newOrderForm.patient,
-      patientId: '',
-      type: newOrderForm.type,
-      description: newOrderForm.description,
-      status: 'Pending Signature',
-      ordered: new Date().toISOString().slice(0, 10),
-      provider: 'Dr. Wilson',
-      priority: newOrderForm.priority,
-      note: newOrderForm.note || undefined,
+    const pid = newOrderForm.patientId || (activePatient?.id ?? '');
+    if (!pid || !newOrderForm.description) return;
+
+    const apiType = mapApiOrderTypeBack(newOrderForm.type);
+    const priority = mapPriorityBack(newOrderForm.priority);
+
+    const onSuccess = () => {
+      toast({ title: 'Order placed successfully' });
+      setNewOrderDialogOpen(false);
+      setNewOrderForm({
+        patient: '',
+        patientId: '',
+        type: 'Lab',
+        description: '',
+        priority: 'Routine',
+        note: '',
+      });
     };
-    setOrders((prev) => [newOrder, ...prev]);
-    setNewOrderDialogOpen(false);
-    setNewOrderForm({
-      patient: '',
-      type: 'Lab',
-      description: '',
-      priority: 'Routine',
-      note: '',
-    });
-  }, [newOrderForm, orders.length]);
+
+    const onError = (err: Error) => {
+      toast({
+        title: 'Failed to place order',
+        description: err.message,
+        variant: 'destructive',
+      });
+    };
+
+    if (apiType === 'medication') {
+      createMedicationOrder.mutate(
+        {
+          patientId: pid,
+          priority,
+          medication: {
+            rxnormCode: '',
+            displayName: newOrderForm.description,
+            dosage: '',
+            route: 'oral',
+            frequency: 'daily',
+            instructions: newOrderForm.note || undefined,
+          },
+        },
+        { onSuccess, onError },
+      );
+    } else if (apiType === 'imaging') {
+      createImagingOrder.mutate(
+        {
+          patientId: pid,
+          priority,
+          imaging: {
+            procedureCode: '',
+            displayName: newOrderForm.description,
+            clinicalIndication: newOrderForm.note || 'See clinical notes',
+          },
+        },
+        { onSuccess, onError },
+      );
+    } else {
+      createLabOrder.mutate(
+        {
+          patientId: pid,
+          priority,
+          lab: {
+            loincCode: '',
+            displayName: newOrderForm.description,
+            clinicalNotes: newOrderForm.note || undefined,
+          },
+        },
+        { onSuccess, onError },
+      );
+    }
+  }, [
+    newOrderForm,
+    activePatient,
+    createMedicationOrder,
+    createLabOrder,
+    createImagingOrder,
+  ]);
+
+  const isSubmitting =
+    createMedicationOrder.isPending ||
+    createLabOrder.isPending ||
+    createImagingOrder.isPending;
 
   const renderOrderTable = (
-    list: ProviderOrder[],
+    list: DisplayOrder[],
     showSignButton: boolean,
+    tableLabel?: string,
   ) => {
     const filtered = filterOrders(list);
     return (
-      <Table>
+      <Table aria-label={tableLabel}>
         <TableHeader>
           <TableRow>
             <TableHead>Order ID</TableHead>
@@ -290,7 +372,7 @@ export function OrdersPage() {
             return (
               <TableRow key={order.id}>
                 <TableCell className="font-mono text-sm">
-                  {order.id}
+                  {order.id.slice(0, 8)}
                 </TableCell>
                 <TableCell className="font-medium">{order.patient}</TableCell>
                 <TableCell>
@@ -298,7 +380,7 @@ export function OrdersPage() {
                     variant="outline"
                     className={`gap-1 ${typeColors[order.type] || ''}`}
                   >
-                    <TypeIcon className="h-3 w-3" />
+                    <TypeIcon className="h-3 w-3" aria-hidden="true" />
                     {order.type}
                   </Badge>
                 </TableCell>
@@ -333,9 +415,11 @@ export function OrdersPage() {
                       <Button
                         size="sm"
                         className="gap-1"
-                        onClick={() => signOrder(order.id)}
+                        onClick={() => handleSignOrder(order.id)}
+                        disabled={signOrderMutation.isPending}
+                        aria-label={`Sign order ${order.id.slice(0, 8)}`}
                       >
-                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
                         Sign
                       </Button>
                     )}
@@ -358,6 +442,25 @@ export function OrdersPage() {
       </Table>
     );
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-24" role="status" aria-label="Loading orders">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-hidden="true" />
+        <span className="ml-2 text-muted-foreground">Loading orders...</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-destructive">
+        <AlertCircle className="h-8 w-8 mb-2" />
+        <p className="font-medium">Failed to load orders</p>
+        <p className="text-sm text-muted-foreground">{(error as Error).message}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -386,12 +489,13 @@ export function OrdersPage() {
 
       <div className="mb-4">
         <div className="relative max-w-md">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
           <Input
             placeholder="Search orders by patient, description, ID..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="pl-9"
+            aria-label="Search orders by patient, description, or ID"
           />
         </div>
       </div>
@@ -416,7 +520,7 @@ export function OrdersPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {renderOrderTable(pendingOrders, true)}
+              {renderOrderTable(pendingOrders, true, 'Orders pending signature')}
             </CardContent>
           </Card>
         </TabsContent>
@@ -430,7 +534,7 @@ export function OrdersPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {renderOrderTable(activeOrders, false)}
+              {renderOrderTable(activeOrders, false, 'Active orders')}
             </CardContent>
           </Card>
         </TabsContent>
@@ -444,7 +548,7 @@ export function OrdersPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {renderOrderTable(orders, true)}
+              {renderOrderTable(orders, true, 'All orders')}
             </CardContent>
           </Card>
         </TabsContent>
@@ -484,7 +588,7 @@ export function OrdersPage() {
                   onValueChange={(v) =>
                     setNewOrderForm((prev) => ({
                       ...prev,
-                      type: v as ProviderOrder['type'],
+                      type: v as OrderTypeLabel,
                     }))
                   }
                 >
@@ -495,8 +599,6 @@ export function OrdersPage() {
                     <SelectItem value="Lab">Lab</SelectItem>
                     <SelectItem value="Imaging">Imaging</SelectItem>
                     <SelectItem value="Medication">Medication</SelectItem>
-                    <SelectItem value="Referral">Referral</SelectItem>
-                    <SelectItem value="Procedure">Procedure</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -507,7 +609,7 @@ export function OrdersPage() {
                   onValueChange={(v) =>
                     setNewOrderForm((prev) => ({
                       ...prev,
-                      priority: v as ProviderOrder['priority'],
+                      priority: v as PriorityLabel,
                     }))
                   }
                 >
@@ -562,8 +664,13 @@ export function OrdersPage() {
             </Button>
             <Button
               onClick={handleNewOrder}
-              disabled={!newOrderForm.patient || !newOrderForm.description}
+              disabled={
+                (!newOrderForm.patientId && !activePatient?.id) ||
+                !newOrderForm.description ||
+                isSubmitting
+              }
             >
+              {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Place Order
             </Button>
           </DialogFooter>

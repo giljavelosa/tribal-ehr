@@ -27,6 +27,7 @@
 // POST   /me/messages/:threadId/reply - Reply to a message thread
 // GET    /me/export/ccda            - Export records as C-CDA XML
 // GET    /me/export/fhir            - Export records as FHIR JSON Bundle
+// GET    /me/export/pdf             - Export health summary as PDF-ready JSON
 // GET    /me/profile                - Get full patient profile
 // PUT    /me/profile                - Update patient demographics
 // GET    /me/preferences            - Get notification preferences
@@ -623,6 +624,54 @@ router.delete(
 );
 
 // ---------------------------------------------------------------------------
+// POST /me/appointments/:id/cancel - Cancel a booked appointment
+// ---------------------------------------------------------------------------
+router.post(
+  '/me/appointments/:id/cancel',
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const patientId = getPatientId(req);
+      const db = (await import('../config/database')).getDb();
+
+      const appointment = await db('appointments')
+        .where({ id: req.params.id, patient_id: patientId })
+        .first();
+
+      if (!appointment) {
+        throw new NotFoundError('Appointment', req.params.id);
+      }
+
+      if (!['booked', 'pending'].includes(appointment.status)) {
+        throw new ValidationError('Only booked or pending appointments can be cancelled');
+      }
+
+      await db('appointments')
+        .where({ id: req.params.id })
+        .update({ status: 'cancelled', cancel_reason: 'Cancelled by patient', updated_at: new Date().toISOString() });
+
+      auditService.log({
+        userId: req.user!.id,
+        userRole: req.user!.role,
+        ipAddress: req.ip || 'unknown',
+        action: 'UPDATE',
+        resourceType: 'Appointment',
+        resourceId: req.params.id,
+        endpoint: req.originalUrl,
+        method: 'POST',
+        statusCode: 200,
+        clinicalContext: 'Patient cancelled appointment via portal',
+        sessionId: req.user!.sessionId,
+        userAgent: req.headers['user-agent'],
+      });
+
+      res.json({ data: { id: req.params.id, status: 'cancelled' } });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+// ---------------------------------------------------------------------------
 // GET /me/documents - Get patient documents
 // ---------------------------------------------------------------------------
 router.get(
@@ -1193,6 +1242,117 @@ router.get(
       res.setHeader('Content-Type', 'application/fhir+json');
       res.setHeader('Content-Disposition', `attachment; filename="health-record-${patientId}.json"`);
       res.json(bundle);
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+// ---------------------------------------------------------------------------
+// GET /me/export/pdf - Export health summary as structured PDF-ready JSON
+// ---------------------------------------------------------------------------
+router.get(
+  '/me/export/pdf',
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const patientId = getPatientId(req);
+      const db = (await import('../config/database')).getDb();
+
+      const [patient, conditions, medications, allergies, immunizations, vitals, labs] =
+        await Promise.all([
+          db('patients').where({ id: patientId }).first(),
+          db('conditions')
+            .where({ patient_id: patientId, clinical_status: 'active' })
+            .select('*')
+            .orderBy('onset_date', 'desc'),
+          db('medication_requests')
+            .where({ patient_id: patientId, status: 'active' })
+            .select('*')
+            .orderBy('authored_on', 'desc'),
+          db('allergy_intolerances')
+            .where({ patient_id: patientId, clinical_status: 'active' })
+            .select('*'),
+          db('immunizations')
+            .where({ patient_id: patientId })
+            .select('*')
+            .orderBy('occurrence_date', 'desc')
+            .limit(50),
+          db('observations')
+            .where({ patient_id: patientId, category: 'vital-signs' })
+            .select('*')
+            .orderBy('effective_date', 'desc')
+            .limit(20),
+          db('observations')
+            .where({ patient_id: patientId, category: 'laboratory' })
+            .select('*')
+            .orderBy('effective_date', 'desc')
+            .limit(20),
+        ]);
+
+      if (!patient) {
+        throw new NotFoundError('Patient', patientId);
+      }
+
+      auditService.log({
+        userId: req.user!.id,
+        userRole: req.user!.role,
+        ipAddress: req.ip || 'unknown',
+        action: 'EXPORT' as any,
+        resourceType: 'PatientRecord',
+        resourceId: patientId,
+        endpoint: req.originalUrl,
+        method: 'GET',
+        statusCode: 200,
+        clinicalContext: 'Patient exported health summary for print/PDF',
+        sessionId: req.user!.sessionId,
+        userAgent: req.headers['user-agent'],
+      });
+
+      res.json({
+        data: {
+          generatedAt: new Date().toISOString(),
+          demographics: {
+            firstName: patient.first_name,
+            lastName: patient.last_name,
+            dateOfBirth: patient.date_of_birth,
+            gender: patient.gender,
+            mrn: patient.mrn,
+          },
+          allergies: allergies.map((a: any) => ({
+            substance: a.substance_name || a.code || 'Unknown',
+            reaction: a.reaction || 'Not specified',
+            criticality: a.criticality || 'Unknown',
+          })),
+          medications: medications.map((m: any) => ({
+            name: m.medication_name || m.code || 'Unknown',
+            dosage: m.dosage_instruction || 'Not specified',
+            status: m.status || 'active',
+          })),
+          conditions: conditions.map((c: any) => ({
+            name: c.display_name || c.code || 'Unknown',
+            status: c.clinical_status || 'active',
+            onsetDate: c.onset_date || null,
+          })),
+          immunizations: immunizations.map((i: any) => ({
+            vaccine: i.vaccine_name || i.code || 'Unknown',
+            date: i.occurrence_date || null,
+            status: i.status || 'completed',
+          })),
+          recentVitals: vitals.map((v: any) => ({
+            name: v.display_name || v.code || 'Unknown',
+            value: v.value_quantity != null ? `${v.value_quantity} ${v.value_unit || ''}`.trim() : 'N/A',
+            date: v.effective_date || null,
+          })),
+          recentLabs: labs.map((l: any) => ({
+            name: l.display_name || l.code || 'Unknown',
+            value: l.value_quantity != null ? `${l.value_quantity} ${l.value_unit || ''}`.trim() : (l.value_string || 'N/A'),
+            date: l.effective_date || null,
+            referenceRange: l.reference_range_low != null && l.reference_range_high != null
+              ? `${l.reference_range_low} - ${l.reference_range_high}`
+              : null,
+          })),
+        },
+      });
     } catch (error) {
       next(error);
     }

@@ -12,7 +12,7 @@ import {
   TrendingUp,
   ArrowRight,
   Stethoscope,
-  Activity,
+  Loader2,
 } from 'lucide-react';
 import {
   Card,
@@ -28,8 +28,9 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { useAuthStore } from '@/stores/auth-store';
 import {
   useSchedule,
-  useAppointments,
-  type Appointment,
+  useResultsInbox,
+  useEscalationEvents,
+  useQualityMeasuresDashboard,
 } from '@/hooks/use-api';
 
 function getGreeting(): string {
@@ -44,6 +45,18 @@ function formatTime(dateStr: string): string {
     hour: 'numeric',
     minute: '2-digit',
   });
+}
+
+function formatRelativeDate(dateStr: string): string {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+
+  if (diffHours < 1) return 'Just now';
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffHours < 48) return 'Yesterday';
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 const appointmentStatusColors: Record<string, string> = {
@@ -72,8 +85,30 @@ export function DashboardPage() {
     return d.toISOString().slice(0, 10);
   }, []);
 
+  // Current year period for quality measures
+  const qualityPeriod = useMemo(() => {
+    const year = new Date().getFullYear();
+    return { start: `${year}-01-01`, end: `${year}-12-31` };
+  }, []);
+
   const { data: todaySchedule, isLoading: scheduleLoading } =
     useSchedule(todayStr);
+
+  // Fetch pending results for Tasks & Alerts
+  const { data: pendingResults, isLoading: resultsLoading } = useResultsInbox({
+    status: 'pending',
+  });
+
+  // Fetch unacknowledged escalation events for alerts
+  const { data: escalationAlerts, isLoading: alertsLoading } = useEscalationEvents({
+    acknowledged: 'false',
+  });
+
+  // Fetch recent results for Recent Results section
+  const { data: recentResults, isLoading: recentResultsLoading } = useResultsInbox();
+
+  // Fetch quality measures dashboard
+  const { data: qualityData, isLoading: qualityLoading } = useQualityMeasuresDashboard(qualityPeriod);
 
   // Derive schedule stats
   const scheduleStats = useMemo(() => {
@@ -124,6 +159,51 @@ export function DashboardPage() {
       .slice(0, 5);
   }, [todaySchedule]);
 
+  // Build tasks list from pending results + escalation alerts
+  const tasks = useMemo(() => {
+    const taskItems: Array<{
+      title: string;
+      subtitle: string;
+      priority: 'critical' | 'high' | 'medium' | 'low';
+      icon: typeof FlaskConical;
+    }> = [];
+
+    // Add pending results as tasks
+    if (pendingResults) {
+      for (const result of pendingResults.slice(0, 3)) {
+        taskItems.push({
+          title: result.codeDisplay || `${result.orderType} Result`,
+          subtitle: `Patient ${result.patientId}`,
+          priority: result.priority === 'stat' ? 'critical' : result.priority === 'urgent' ? 'high' : 'medium',
+          icon: FlaskConical,
+        });
+      }
+    }
+
+    // Add unacknowledged escalation alerts as tasks
+    if (escalationAlerts) {
+      for (const alert of escalationAlerts.slice(0, 2)) {
+        taskItems.push({
+          title: `Escalation: ${alert.sourceType}`,
+          subtitle: `Escalated to ${alert.escalatedTo}`,
+          priority: 'high',
+          icon: AlertTriangle,
+        });
+      }
+    }
+
+    return taskItems.slice(0, 5);
+  }, [pendingResults, escalationAlerts]);
+
+  // Summary counts for stat cards
+  const pendingTaskCount = (pendingResults?.length ?? 0) + (escalationAlerts?.length ?? 0);
+  const highPriorityCount = useMemo(() => {
+    const highResults = pendingResults?.filter((r) => r.priority === 'stat' || r.priority === 'urgent').length ?? 0;
+    const unackAlerts = escalationAlerts?.length ?? 0;
+    return highResults + unackAlerts;
+  }, [pendingResults, escalationAlerts]);
+  const unsignedResultCount = pendingResults?.length ?? 0;
+
   return (
     <div className="space-y-6">
       {/* Welcome header */}
@@ -171,9 +251,15 @@ export function DashboardPage() {
             <CheckCircle2 className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">7</div>
+            <div className="text-2xl font-bold">
+              {resultsLoading || alertsLoading ? '--' : pendingTaskCount}
+            </div>
             <p className="text-xs text-muted-foreground">
-              2 high priority items
+              {resultsLoading || alertsLoading
+                ? 'Loading...'
+                : highPriorityCount > 0
+                  ? `${highPriorityCount} high priority item${highPriorityCount !== 1 ? 's' : ''}`
+                  : 'No high priority items'}
             </p>
           </CardContent>
         </Card>
@@ -186,9 +272,11 @@ export function DashboardPage() {
             <MessageSquare className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">4</div>
+            <div className="text-2xl font-bold">
+              {alertsLoading ? '--' : (escalationAlerts?.length ?? 0)}
+            </div>
             <p className="text-xs text-muted-foreground">
-              1 from nursing staff
+              {alertsLoading ? 'Loading...' : 'Unacknowledged escalations'}
             </p>
           </CardContent>
         </Card>
@@ -201,9 +289,11 @@ export function DashboardPage() {
             <FlaskConical className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">5</div>
+            <div className="text-2xl font-bold">
+              {resultsLoading ? '--' : unsignedResultCount}
+            </div>
             <p className="text-xs text-muted-foreground">
-              1 critical value pending
+              {resultsLoading ? 'Loading...' : 'Pending acknowledgment'}
             </p>
           </CardContent>
         </Card>
@@ -335,70 +425,51 @@ export function DashboardPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-3">
-              {[
-                {
-                  title: 'Critical Lab Result - K+ 6.2',
-                  patient: 'Robert Williams',
-                  priority: 'critical' as const,
-                  icon: FlaskConical,
-                },
-                {
-                  title: 'Prescription Renewal Request',
-                  patient: 'Mary Johnson',
-                  priority: 'high' as const,
-                  icon: FileText,
-                },
-                {
-                  title: 'Sign Visit Note',
-                  patient: 'John Smith',
-                  priority: 'medium' as const,
-                  icon: FileText,
-                },
-                {
-                  title: 'Patient Message',
-                  patient: 'Sarah Davis',
-                  priority: 'low' as const,
-                  icon: MessageSquare,
-                },
-                {
-                  title: 'Referral Follow-up Needed',
-                  patient: 'James Brown',
-                  priority: 'medium' as const,
-                  icon: Users,
-                },
-              ].map((task, i) => (
-                <div key={i}>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <task.icon className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
-                      <div>
-                        <p className="text-sm font-medium">{task.title}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {task.patient}
-                        </p>
+            {resultsLoading || alertsLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : tasks.length === 0 ? (
+              <div className="py-8 text-center text-muted-foreground">
+                <CheckCircle2 className="mx-auto mb-3 h-10 w-10" />
+                <p className="font-medium">All caught up</p>
+                <p className="text-sm">No pending tasks or alerts.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {tasks.map((task, i) => (
+                  <div key={i}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <task.icon className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                        <div>
+                          <p className="text-sm font-medium">{task.title}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {task.subtitle}
+                          </p>
+                        </div>
                       </div>
+                      <Badge
+                        variant={
+                          task.priority === 'critical' ||
+                          task.priority === 'high'
+                            ? 'destructive'
+                            : 'outline'
+                        }
+                        className={
+                          task.priority === 'critical'
+                            ? 'animate-pulse'
+                            : undefined
+                        }
+                      >
+                        {task.priority}
+                      </Badge>
                     </div>
-                    <Badge
-                      variant={
-                        task.priority === 'critical' ||
-                        task.priority === 'high'
-                          ? 'destructive'
-                          : 'outline'
-                      }
-                      className={
-                        task.priority === 'critical'
-                          ? 'animate-pulse'
-                          : undefined
-                      }
-                    >
-                      {task.priority}
-                    </Badge>
+                    {i < tasks.length - 1 && <Separator className="mt-3" />}
                   </div>
-                  {i < 4 && <Separator className="mt-3" />}
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
             <Button
               variant="outline"
               className="mt-4 w-full gap-1"
@@ -433,56 +504,52 @@ export function DashboardPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="space-y-3">
-              {[
-                {
-                  patient: 'Robert Williams',
-                  test: 'Basic Metabolic Panel',
-                  date: 'Today, 8:30 AM',
-                  status: 'Critical',
-                },
-                {
-                  patient: 'Mary Johnson',
-                  test: 'CBC with Differential',
-                  date: 'Today, 7:15 AM',
-                  status: 'Normal',
-                },
-                {
-                  patient: 'John Smith',
-                  test: 'Chest X-Ray',
-                  date: 'Yesterday',
-                  status: 'Abnormal',
-                },
-              ].map((result, i) => (
-                <div
-                  key={i}
-                  className="flex items-center justify-between rounded-lg border p-3"
-                >
-                  <div>
-                    <p className="text-sm font-medium">{result.patient}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {result.test}
-                    </p>
+            {recentResultsLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : !recentResults || recentResults.length === 0 ? (
+              <div className="py-6 text-center text-sm text-muted-foreground">
+                <FlaskConical className="mx-auto mb-2 h-8 w-8" />
+                <p>No recent results to display.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {recentResults.slice(0, 5).map((result) => (
+                  <div
+                    key={result.id}
+                    className="flex items-center justify-between rounded-lg border p-3"
+                  >
+                    <div>
+                      <p className="text-sm font-medium">
+                        {result.codeDisplay || result.orderType}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {result.orderType} - {result.patientId}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <Badge
+                        variant={
+                          result.priority === 'stat'
+                            ? 'destructive'
+                            : result.priority === 'urgent'
+                              ? 'secondary'
+                              : 'outline'
+                        }
+                      >
+                        {result.status}
+                      </Badge>
+                      {result.orderedAt && (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {formatRelativeDate(result.orderedAt)}
+                        </p>
+                      )}
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <Badge
-                      variant={
-                        result.status === 'Critical'
-                          ? 'destructive'
-                          : result.status === 'Abnormal'
-                            ? 'secondary'
-                            : 'outline'
-                      }
-                    >
-                      {result.status}
-                    </Badge>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {result.date}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -564,68 +631,58 @@ export function DashboardPage() {
             <CardDescription>Panel performance metrics</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {[
-                {
-                  measure: 'HbA1c Screening',
-                  value: 87,
-                  target: 90,
-                  trend: 'up',
-                },
-                {
-                  measure: 'BP Control (<140/90)',
-                  value: 72,
-                  target: 80,
-                  trend: 'up',
-                },
-                {
-                  measure: 'Annual Wellness Visits',
-                  value: 65,
-                  target: 75,
-                  trend: 'stable',
-                },
-                {
-                  measure: 'Colorectal Screening',
-                  value: 78,
-                  target: 80,
-                  trend: 'up',
-                },
-              ].map((metric, i) => (
-                <div key={i} className="space-y-1">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="font-medium">{metric.measure}</span>
-                    <span
-                      className={`font-semibold ${
-                        metric.value >= metric.target
-                          ? 'text-green-600 dark:text-green-400'
-                          : metric.value >= metric.target - 10
-                            ? 'text-amber-600 dark:text-amber-400'
-                            : 'text-red-600 dark:text-red-400'
-                      }`}
-                    >
-                      {metric.value}%
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="h-2 flex-1 rounded-full bg-muted">
-                      <div
-                        className={`h-2 rounded-full transition-all ${
-                          metric.value >= metric.target
-                            ? 'bg-green-500'
-                            : metric.value >= metric.target - 10
-                              ? 'bg-amber-500'
-                              : 'bg-red-500'
-                        }`}
-                        style={{ width: `${Math.min(metric.value, 100)}%` }}
-                      />
+            {qualityLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : !qualityData || qualityData.measures.length === 0 ? (
+              <div className="py-6 text-center text-sm text-muted-foreground">
+                <TrendingUp className="mx-auto mb-2 h-8 w-8" />
+                <p>No quality measures data available.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {qualityData.measures.slice(0, 4).map((metric) => {
+                  const target = 70; // threshold from the service
+                  const value = Math.round(metric.rate);
+                  return (
+                    <div key={metric.measureId} className="space-y-1">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="font-medium">{metric.measureName}</span>
+                        <span
+                          className={`font-semibold ${
+                            value >= target
+                              ? 'text-green-600 dark:text-green-400'
+                              : value >= target - 10
+                                ? 'text-amber-600 dark:text-amber-400'
+                                : 'text-red-600 dark:text-red-400'
+                          }`}
+                        >
+                          {value}%
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="h-2 flex-1 rounded-full bg-muted">
+                          <div
+                            className={`h-2 rounded-full transition-all ${
+                              value >= target
+                                ? 'bg-green-500'
+                                : value >= target - 10
+                                  ? 'bg-amber-500'
+                                  : 'bg-red-500'
+                            }`}
+                            style={{ width: `${Math.min(value, 100)}%` }}
+                          />
+                        </div>
+                        <span className="text-xs text-muted-foreground">
+                          /{target}%
+                        </span>
+                      </div>
                     </div>
-                    <span className="text-xs text-muted-foreground">
-                      /{metric.target}%
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

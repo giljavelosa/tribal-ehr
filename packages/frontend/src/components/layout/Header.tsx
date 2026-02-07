@@ -63,6 +63,7 @@ export function Header({ onMenuClick }: HeaderProps) {
         size="icon"
         className="lg:hidden"
         onClick={onMenuClick}
+        aria-label="Open navigation menu"
       >
         <Menu className="h-5 w-5" />
       </Button>
@@ -74,6 +75,7 @@ export function Header({ onMenuClick }: HeaderProps) {
           <Input
             placeholder="Search patients, orders, results..."
             className="pl-9"
+            aria-label="Search patients, orders, results"
           />
         </div>
       </div>
@@ -87,7 +89,7 @@ export function Header({ onMenuClick }: HeaderProps) {
         </div>
 
         {/* Notifications */}
-        <Button variant="ghost" size="icon" className="relative">
+        <Button variant="ghost" size="icon" className="relative" aria-label="Notifications">
           <Bell className="h-5 w-5" />
           <Badge className="absolute -right-1 -top-1 h-5 w-5 items-center justify-center rounded-full p-0 text-[10px]">
             3

@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Search, User, X, Loader2 } from 'lucide-react';
 import { Input } from './input';
 import { usePatients, type Patient } from '@/hooks/use-api';
+import { useDebounce } from '@/hooks/use-debounce';
 import { cn } from '@/lib/utils';
 
 interface PatientSearchProps {
@@ -26,14 +27,7 @@ export function PatientSearch({
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Debounced search - only search after user stops typing
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearch(searchTerm);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [searchTerm]);
+  const debouncedSearch = useDebounce(searchTerm, 300);
 
   // Fetch patients based on search term
   const { data: patients, isLoading } = usePatients(

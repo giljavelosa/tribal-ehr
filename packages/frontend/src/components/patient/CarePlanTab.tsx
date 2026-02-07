@@ -7,11 +7,13 @@ import {
   CheckCircle2,
   Circle,
   Clock,
+  PenLine,
+  Trash2,
+  XCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import {
   Card,
@@ -39,6 +41,7 @@ import { Separator } from '@/components/ui/separator';
 import {
   useCarePlans,
   useCreateCarePlan,
+  useUpdateCarePlan,
   type CarePlan,
   type CarePlanGoal,
   type CarePlanActivity,
@@ -62,13 +65,29 @@ const goalStatusIcons: Record<string, React.ElementType> = {
   accepted: Circle,
   proposed: Clock,
   planned: Clock,
+  cancelled: XCircle,
 };
+
+interface EditFormData {
+  title: string;
+  category: string;
+  status: CarePlan['status'];
+  goals: CarePlanGoal[];
+  activities: CarePlanActivity[];
+  newGoalDescription: string;
+  newGoalTarget: string;
+  newGoalDueDate: string;
+  newActivityDescription: string;
+}
 
 export function CarePlanTab({ patientId }: CarePlanTabProps) {
   const { data: carePlans, isLoading, error } = useCarePlans(patientId);
   const createCarePlan = useCreateCarePlan();
+  const updateCarePlan = useUpdateCarePlan();
 
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editingPlan, setEditingPlan] = useState<CarePlan | null>(null);
   const [formData, setFormData] = useState({
     title: '',
     category: 'longitudinal',
@@ -79,6 +98,18 @@ export function CarePlanTab({ patientId }: CarePlanTabProps) {
     activityDescription: '',
     careTeamName: '',
     careTeamRole: '',
+  });
+
+  const [editFormData, setEditFormData] = useState<EditFormData>({
+    title: '',
+    category: 'longitudinal',
+    status: 'active',
+    goals: [],
+    activities: [],
+    newGoalDescription: '',
+    newGoalTarget: '',
+    newGoalDueDate: '',
+    newActivityDescription: '',
   });
 
   const handleSubmit = useCallback(async () => {
@@ -134,6 +165,97 @@ export function CarePlanTab({ patientId }: CarePlanTabProps) {
       careTeamRole: '',
     });
   }, [formData, patientId, createCarePlan]);
+
+  const openEditDialog = useCallback((plan: CarePlan) => {
+    setEditingPlan(plan);
+    setEditFormData({
+      title: plan.title,
+      category: plan.category,
+      status: plan.status,
+      goals: [...plan.goals],
+      activities: [...plan.activities],
+      newGoalDescription: '',
+      newGoalTarget: '',
+      newGoalDueDate: '',
+      newActivityDescription: '',
+    });
+    setEditDialogOpen(true);
+  }, []);
+
+  const handleAddGoal = useCallback(() => {
+    if (!editFormData.newGoalDescription) return;
+    const newGoal: CarePlanGoal = {
+      id: `temp-${Date.now()}`,
+      description: editFormData.newGoalDescription,
+      status: 'active',
+      target: editFormData.newGoalTarget || undefined,
+      dueDate: editFormData.newGoalDueDate || undefined,
+    };
+    setEditFormData((prev) => ({
+      ...prev,
+      goals: [...prev.goals, newGoal],
+      newGoalDescription: '',
+      newGoalTarget: '',
+      newGoalDueDate: '',
+    }));
+  }, [editFormData.newGoalDescription, editFormData.newGoalTarget, editFormData.newGoalDueDate]);
+
+  const handleRemoveGoal = useCallback((goalId: string) => {
+    setEditFormData((prev) => ({
+      ...prev,
+      goals: prev.goals.filter((g) => g.id !== goalId),
+    }));
+  }, []);
+
+  const handleGoalStatusChange = useCallback((goalId: string, newStatus: CarePlanGoal['status']) => {
+    setEditFormData((prev) => ({
+      ...prev,
+      goals: prev.goals.map((g) =>
+        g.id === goalId ? { ...g, status: newStatus } : g,
+      ),
+    }));
+  }, []);
+
+  const handleAddActivity = useCallback(() => {
+    if (!editFormData.newActivityDescription) return;
+    const newActivity: CarePlanActivity = {
+      id: `temp-${Date.now()}-a`,
+      description: editFormData.newActivityDescription,
+      status: 'not-started',
+    };
+    setEditFormData((prev) => ({
+      ...prev,
+      activities: [...prev.activities, newActivity],
+      newActivityDescription: '',
+    }));
+  }, [editFormData.newActivityDescription]);
+
+  const handleRemoveActivity = useCallback((activityId: string) => {
+    setEditFormData((prev) => ({
+      ...prev,
+      activities: prev.activities.filter((a) => a.id !== activityId),
+    }));
+  }, []);
+
+  const handleEditSubmit = useCallback(async () => {
+    if (!editingPlan) return;
+
+    const data: Partial<CarePlan> = {
+      title: editFormData.title,
+      status: editFormData.status,
+      category: editFormData.category,
+      goals: editFormData.goals,
+      activities: editFormData.activities,
+    };
+
+    await updateCarePlan.mutateAsync({
+      patientId,
+      carePlanId: editingPlan.id,
+      data,
+    });
+    setEditDialogOpen(false);
+    setEditingPlan(null);
+  }, [editingPlan, editFormData, patientId, updateCarePlan]);
 
   if (error) {
     return (
@@ -197,12 +319,23 @@ export function CarePlanTab({ patientId }: CarePlanTabProps) {
                         ` | Started: ${new Date(plan.period.start).toLocaleDateString('en-US')}`}
                     </CardDescription>
                   </div>
-                  <Badge
-                    variant="outline"
-                    className={statusColors[plan.status] || ''}
-                  >
-                    {plan.status}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => openEditDialog(plan)}
+                      title="Edit Care Plan"
+                    >
+                      <PenLine className="h-4 w-4" />
+                    </Button>
+                    <Badge
+                      variant="outline"
+                      className={statusColors[plan.status] || ''}
+                    >
+                      {plan.status}
+                    </Badge>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -228,7 +361,9 @@ export function CarePlanTab({ patientId }: CarePlanTabProps) {
                                   ? 'text-green-600'
                                   : goal.status === 'active'
                                     ? 'text-blue-600'
-                                    : 'text-muted-foreground'
+                                    : goal.status === 'cancelled'
+                                      ? 'text-red-600'
+                                      : 'text-muted-foreground'
                               }`}
                             />
                             <div className="flex-1">
@@ -335,12 +470,23 @@ export function CarePlanTab({ patientId }: CarePlanTabProps) {
                   <CardHeader className="py-4">
                     <div className="flex items-center justify-between">
                       <CardTitle className="text-sm">{plan.title}</CardTitle>
-                      <Badge
-                        variant="outline"
-                        className={statusColors[plan.status] || ''}
-                      >
-                        {plan.status}
-                      </Badge>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          onClick={() => openEditDialog(plan)}
+                          title="Edit Care Plan"
+                        >
+                          <PenLine className="h-3 w-3" />
+                        </Button>
+                        <Badge
+                          variant="outline"
+                          className={statusColors[plan.status] || ''}
+                        >
+                          {plan.status}
+                        </Badge>
+                      </div>
                     </div>
                   </CardHeader>
                 </Card>
@@ -507,6 +653,243 @@ export function CarePlanTab({ patientId }: CarePlanTabProps) {
               disabled={!formData.title || createCarePlan.isPending}
             >
               {createCarePlan.isPending ? 'Creating...' : 'Create Care Plan'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Care Plan Dialog */}
+      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit Care Plan</DialogTitle>
+            <DialogDescription>
+              Update the care plan details, goals, and activities.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="editCpTitle">Plan Title</Label>
+              <Input
+                id="editCpTitle"
+                value={editFormData.title}
+                onChange={(e) =>
+                  setEditFormData((prev) => ({ ...prev, title: e.target.value }))
+                }
+              />
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Category</Label>
+                <Select
+                  value={editFormData.category}
+                  onValueChange={(v) =>
+                    setEditFormData((prev) => ({ ...prev, category: v }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="longitudinal">Longitudinal</SelectItem>
+                    <SelectItem value="encounter">Encounter-based</SelectItem>
+                    <SelectItem value="disease-management">
+                      Disease Management
+                    </SelectItem>
+                    <SelectItem value="preventive">Preventive Care</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Status</Label>
+                <Select
+                  value={editFormData.status}
+                  onValueChange={(v) =>
+                    setEditFormData((prev) => ({
+                      ...prev,
+                      status: v as CarePlan['status'],
+                    }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="draft">Draft</SelectItem>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="on-hold">On Hold</SelectItem>
+                    <SelectItem value="completed">Completed</SelectItem>
+                    <SelectItem value="cancelled">Cancelled</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Goals Section */}
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Goals</Label>
+              {editFormData.goals.length > 0 && (
+                <div className="space-y-2">
+                  {editFormData.goals.map((goal) => (
+                    <div
+                      key={goal.id}
+                      className="flex items-center gap-2 rounded-lg border p-2"
+                    >
+                      <div className="flex-1">
+                        <p className="text-sm font-medium">{goal.description}</p>
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          {goal.target && <span>Target: {goal.target}</span>}
+                          {goal.dueDate && (
+                            <span>
+                              Due: {new Date(goal.dueDate).toLocaleDateString('en-US')}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <Select
+                        value={goal.status}
+                        onValueChange={(v) =>
+                          handleGoalStatusChange(goal.id, v as CarePlanGoal['status'])
+                        }
+                      >
+                        <SelectTrigger className="w-[130px] h-8 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="proposed">Proposed</SelectItem>
+                          <SelectItem value="planned">Planned</SelectItem>
+                          <SelectItem value="accepted">Accepted</SelectItem>
+                          <SelectItem value="active">Active</SelectItem>
+                          <SelectItem value="on-hold">On Hold</SelectItem>
+                          <SelectItem value="completed">Completed</SelectItem>
+                          <SelectItem value="cancelled">Cancelled</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-destructive"
+                        onClick={() => handleRemoveGoal(goal.id)}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="space-y-2 rounded-lg border border-dashed p-3">
+                <Input
+                  placeholder="New goal description..."
+                  value={editFormData.newGoalDescription}
+                  onChange={(e) =>
+                    setEditFormData((prev) => ({
+                      ...prev,
+                      newGoalDescription: e.target.value,
+                    }))
+                  }
+                />
+                <div className="grid gap-2 sm:grid-cols-3">
+                  <Input
+                    placeholder="Target"
+                    value={editFormData.newGoalTarget}
+                    onChange={(e) =>
+                      setEditFormData((prev) => ({
+                        ...prev,
+                        newGoalTarget: e.target.value,
+                      }))
+                    }
+                  />
+                  <Input
+                    type="date"
+                    value={editFormData.newGoalDueDate}
+                    onChange={(e) =>
+                      setEditFormData((prev) => ({
+                        ...prev,
+                        newGoalDueDate: e.target.value,
+                      }))
+                    }
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleAddGoal}
+                    disabled={!editFormData.newGoalDescription}
+                    className="gap-1"
+                  >
+                    <Plus className="h-3 w-3" />
+                    Add Goal
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Activities Section */}
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Activities</Label>
+              {editFormData.activities.length > 0 && (
+                <div className="space-y-2">
+                  {editFormData.activities.map((activity) => (
+                    <div
+                      key={activity.id}
+                      className="flex items-center gap-2 rounded-lg border p-2"
+                    >
+                      <span className="flex-1 text-sm">
+                        {activity.description}
+                      </span>
+                      <Badge variant="outline" className="text-xs">
+                        {activity.status}
+                      </Badge>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-destructive"
+                        onClick={() => handleRemoveActivity(activity.id)}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="flex gap-2 rounded-lg border border-dashed p-3">
+                <Input
+                  placeholder="New activity description..."
+                  value={editFormData.newActivityDescription}
+                  onChange={(e) =>
+                    setEditFormData((prev) => ({
+                      ...prev,
+                      newActivityDescription: e.target.value,
+                    }))
+                  }
+                  className="flex-1"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleAddActivity}
+                  disabled={!editFormData.newActivityDescription}
+                  className="gap-1"
+                >
+                  <Plus className="h-3 w-3" />
+                  Add
+                </Button>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleEditSubmit}
+              disabled={!editFormData.title || updateCarePlan.isPending}
+            >
+              {updateCarePlan.isPending ? 'Saving...' : 'Save Changes'}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -321,15 +321,15 @@ export function AuditLogPage() {
       <Card>
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
-            <CardDescription>
+            <CardDescription aria-live="polite">
               {isLoading ? 'Loading...' : `${total} event${total !== 1 ? 's' : ''} found`}
             </CardDescription>
           </div>
         </CardHeader>
         <CardContent className="p-0">
           {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <div className="flex items-center justify-center py-12" role="status" aria-label="Loading audit events">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" aria-hidden="true" />
             </div>
           ) : events.length === 0 ? (
             <div className="flex flex-col items-center gap-3 py-12">
@@ -337,7 +337,7 @@ export function AuditLogPage() {
               <p className="text-muted-foreground">No audit events found for the selected filters.</p>
             </div>
           ) : (
-            <Table>
+            <Table aria-label="Audit log events">
               <TableHeader>
                 <TableRow>
                   <TableHead>Timestamp</TableHead>
@@ -407,8 +407,9 @@ export function AuditLogPage() {
                   size="sm"
                   disabled={filters.page <= 1}
                   onClick={() => setFilters((p) => ({ ...p, page: p.page - 1 }))}
+                  aria-label="Previous page"
                 >
-                  <ChevronLeft className="h-4 w-4" />
+                  <ChevronLeft className="h-4 w-4" aria-hidden="true" />
                   Previous
                 </Button>
                 <Button
@@ -416,9 +417,10 @@ export function AuditLogPage() {
                   size="sm"
                   disabled={filters.page >= totalPages}
                   onClick={() => setFilters((p) => ({ ...p, page: p.page + 1 }))}
+                  aria-label="Next page"
                 >
                   Next
-                  <ChevronRight className="h-4 w-4" />
+                  <ChevronRight className="h-4 w-4" aria-hidden="true" />
                 </Button>
               </div>
             </div>

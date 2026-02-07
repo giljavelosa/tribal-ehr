@@ -802,7 +802,12 @@ router.post(
               .first();
 
             if (client && client.is_confidential && tokenRequest.client_secret) {
-              if (client.client_secret !== tokenRequest.client_secret) {
+              // Compare provided secret against bcrypt hash
+              const clientSecretValid = await bcrypt.compare(
+                tokenRequest.client_secret,
+                client.client_secret,
+              );
+              if (!clientSecretValid) {
                 res.status(401).json({
                   error: 'invalid_client',
                   error_description: 'Client authentication failed',
@@ -936,7 +941,17 @@ router.post(
             .where({ client_id: tokenRequest.client_id })
             .first();
 
-          if (!client || client.client_secret !== tokenRequest.client_secret) {
+          if (!client || !client.client_secret) {
+            res.status(401).json({
+              error: 'invalid_client',
+              error_description: 'Client authentication failed',
+            });
+            return;
+          }
+
+          // Compare provided secret against bcrypt hash
+          const secretValid = await bcrypt.compare(tokenRequest.client_secret, client.client_secret);
+          if (!secretValid) {
             res.status(401).json({
               error: 'invalid_client',
               error_description: 'Client authentication failed',
@@ -1002,9 +1017,12 @@ router.post(
       const isConfidential = registration.token_endpoint_auth_method !== 'none';
       const grantTypes = registration.grant_types || ['authorization_code'];
 
+      // Hash the client secret before storage (like passwords)
+      const hashedSecret = isConfidential ? await bcrypt.hash(clientSecret, 12) : null;
+
       await db('oauth_clients').insert({
         client_id: clientId,
-        client_secret: isConfidential ? clientSecret : null,
+        client_secret: hashedSecret,
         client_name: registration.client_name,
         redirect_uris: JSON.stringify(registration.redirect_uris),
         grant_types: JSON.stringify(grantTypes),
@@ -1142,6 +1160,46 @@ router.post(
         iat: decoded.iat,
         iss: decoded.iss || undefined,
         aud: decoded.aud || undefined,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+// ---------------------------------------------------------------------------
+// POST /forgot-password - Request a password reset link
+// ---------------------------------------------------------------------------
+
+const forgotPasswordSchema = z.object({
+  email: z.string().email('Invalid email address'),
+});
+
+router.post(
+  '/forgot-password',
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const parsed = forgotPasswordSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new ValidationError('Invalid input', parsed.error.flatten().fieldErrors);
+      }
+
+      const { email } = parsed.data;
+
+      // Look up user but do not reveal whether the email exists
+      const user = await db('users').where({ email: email.toLowerCase() }).first();
+
+      if (user) {
+        // In a production system, this would send a password reset email.
+        // For now, log the request for auditing purposes.
+        logger.info('Password reset requested', { userId: user.id, email });
+      } else {
+        logger.info('Password reset requested for non-existent email', { email });
+      }
+
+      // Always return the same response to avoid email enumeration
+      res.json({
+        message: 'If an account exists with this email, a password reset link has been sent.',
       });
     } catch (error) {
       next(error);

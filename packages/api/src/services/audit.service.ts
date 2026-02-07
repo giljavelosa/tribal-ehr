@@ -46,6 +46,35 @@ export interface AuditSearchParams extends PaginationParams {
   order?: 'asc' | 'desc';
 }
 
+export interface IntegrityResult {
+  valid: boolean;
+  totalRecords: number;
+  checkedRecords: number;
+  firstBreak: number | null;
+  lastVerified: string;
+}
+
+export interface AuditDigest {
+  id: string;
+  periodStart: string;
+  periodEnd: string;
+  recordCount: number;
+  digestHash: string;
+  algorithm: string;
+  firstRecordHash: string | null;
+  lastRecordHash: string | null;
+  generatedBy: string | null;
+  createdAt: string;
+}
+
+export interface AuditAnomaly {
+  type: 'mass_data_access' | 'after_hours_access' | 'rapid_sequential_access';
+  userId: string;
+  count: number;
+  timeRange: { start: string; end: string };
+  severity: 'low' | 'medium' | 'high' | 'critical';
+}
+
 // ---------------------------------------------------------------------------
 // Encryption helpers
 // ---------------------------------------------------------------------------
@@ -162,41 +191,72 @@ export class AuditService extends BaseService {
 
   /**
    * Verify the integrity of the audit hash chain.
-   * Returns { valid: true } if intact, or { valid: false, brokenAt: id } on first break.
+   * For performance, only verifies the last N records (configurable, default 1000).
    */
   async verifyIntegrity(
-    startId?: string,
-    endId?: string
-  ): Promise<{ valid: boolean; brokenAt?: string }> {
+    limit: number = 1000
+  ): Promise<IntegrityResult> {
     try {
-      const query = this.db('audit_events').select('*').orderBy('created_at', 'asc');
+      // Count total records
+      const countResult = await this.db('audit_events')
+        .count('* as total')
+        .first() as { total: string | number } | undefined;
+      const totalRecords = countResult ? Number(countResult.total) : 0;
 
-      if (startId) {
-        const startRow = await this.db('audit_events').where({ id: startId }).first();
-        if (startRow) {
-          query.where('created_at', '>=', startRow.created_at);
-        }
+      if (totalRecords === 0) {
+        return {
+          valid: true,
+          totalRecords: 0,
+          checkedRecords: 0,
+          firstBreak: null,
+          lastVerified: new Date().toISOString(),
+        };
       }
-      if (endId) {
-        const endRow = await this.db('audit_events').where({ id: endId }).first();
-        if (endRow) {
-          query.where('created_at', '<=', endRow.created_at);
-        }
-      }
 
-      const rows = await query;
+      // Get the last N records ordered by created_at ASC for chain verification.
+      // We use a subquery approach: get the most recent N by descending, then re-sort ascending.
+      const rows = await this.db('audit_events')
+        .select('*')
+        .orderBy('created_at', 'desc')
+        .limit(limit);
 
+      // Reverse to get ascending order
+      rows.reverse();
+
+      // For the first record in our window, we need the previous hash
+      // If we are not starting from the very first record, fetch the hash_previous of the first row
       let previousHash = '';
+      if (rows.length > 0) {
+        // The first row in our window stores its previous hash
+        previousHash = rows[0].hash_previous || '';
+      }
+
+      let checkedRecords = 0;
+      let firstBreak: number | null = null;
 
       for (const row of rows) {
+        checkedRecords++;
         const expectedHash = this.computeHash(row, previousHash);
         if (row.hash !== expectedHash) {
-          return { valid: false, brokenAt: row.id };
+          firstBreak = checkedRecords;
+          return {
+            valid: false,
+            totalRecords,
+            checkedRecords,
+            firstBreak,
+            lastVerified: new Date().toISOString(),
+          };
         }
         previousHash = row.hash;
       }
 
-      return { valid: true };
+      return {
+        valid: true,
+        totalRecords,
+        checkedRecords,
+        firstBreak: null,
+        lastVerified: new Date().toISOString(),
+      };
     } catch (error) {
       this.handleError('Failed to verify audit integrity', error);
     }
@@ -232,6 +292,197 @@ export class AuditService extends BaseService {
       return JSON.stringify(this.toFHIRAuditBundle(events), null, 2);
     } catch (error) {
       this.handleError('Failed to export audit events', error);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Digest signing - proves integrity of a batch of audit records
+  // -------------------------------------------------------------------------
+
+  /**
+   * Generate a signed digest (HMAC-SHA256) of all audit events in the given period.
+   * The digest covers every hash in the period, proving no records were modified or removed.
+   */
+  async generateDigest(
+    startDate: string,
+    endDate: string,
+    generatedBy?: string
+  ): Promise<AuditDigest> {
+    try {
+      const rows = await this.db('audit_events')
+        .select('hash')
+        .where('created_at', '>=', startDate)
+        .where('created_at', '<=', endDate)
+        .orderBy('created_at', 'asc');
+
+      if (rows.length === 0) {
+        const id = crypto.randomUUID();
+        const emptyDigest: AuditDigest = {
+          id,
+          periodStart: startDate,
+          periodEnd: endDate,
+          recordCount: 0,
+          digestHash: '',
+          algorithm: 'hmac-sha256',
+          firstRecordHash: null,
+          lastRecordHash: null,
+          generatedBy: generatedBy || null,
+          createdAt: new Date().toISOString(),
+        };
+        return emptyDigest;
+      }
+
+      // Concatenate all hashes to create the digest payload
+      const allHashes = rows.map((r: Record<string, unknown>) => r.hash as string).join('|');
+      const hmacKey = config.encryption.key;
+      const digestHash = crypto
+        .createHmac('sha256', hmacKey)
+        .update(allHashes)
+        .digest('hex');
+
+      const id = crypto.randomUUID();
+      const now = new Date().toISOString();
+      const firstRecordHash = rows[0].hash as string;
+      const lastRecordHash = rows[rows.length - 1].hash as string;
+
+      // Store in audit_digests table
+      await this.db('audit_digests').insert({
+        id,
+        period_start: startDate,
+        period_end: endDate,
+        record_count: rows.length,
+        digest_hash: digestHash,
+        algorithm: 'hmac-sha256',
+        first_record_hash: firstRecordHash,
+        last_record_hash: lastRecordHash,
+        generated_by: generatedBy || null,
+        created_at: now,
+      });
+
+      this.logger.info('Audit digest generated', {
+        digestId: id,
+        periodStart: startDate,
+        periodEnd: endDate,
+        recordCount: rows.length,
+      });
+
+      return {
+        id,
+        periodStart: startDate,
+        periodEnd: endDate,
+        recordCount: rows.length,
+        digestHash,
+        algorithm: 'hmac-sha256',
+        firstRecordHash,
+        lastRecordHash,
+        generatedBy: generatedBy || null,
+        createdAt: now,
+      };
+    } catch (error) {
+      this.handleError('Failed to generate audit digest', error);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Anomaly detection
+  // -------------------------------------------------------------------------
+
+  /**
+   * Detect anomalies in audit events over the given time window.
+   * Checks for:
+   *  - Mass data access: >100 patient records by a single user in 1 hour
+   *  - After-hours access: access between 10PM and 6AM
+   *  - Rapid sequential access: >50 requests by a single user in 5 minutes
+   */
+  async detectAnomalies(hours: number = 24): Promise<AuditAnomaly[]> {
+    try {
+      const anomalies: AuditAnomaly[] = [];
+      const since = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+
+      // 1. Mass data access: >100 distinct patient records by a single user in 1 hour
+      const massAccessRows = await this.db('audit_events')
+        .select('user_id')
+        .count('distinct resource_id as access_count')
+        .min('timestamp as first_access')
+        .max('timestamp as last_access')
+        .where('created_at', '>=', since)
+        .where('resource_type', 'Patient')
+        .where('action', 'READ')
+        .groupBy('user_id')
+        .havingRaw('count(distinct resource_id) > 100');
+
+      for (const row of massAccessRows) {
+        anomalies.push({
+          type: 'mass_data_access',
+          userId: row.user_id as string,
+          count: Number(row.access_count),
+          timeRange: {
+            start: row.first_access as string,
+            end: row.last_access as string,
+          },
+          severity: Number(row.access_count) > 500 ? 'critical' : 'high',
+        });
+      }
+
+      // 2. After-hours access: access between 10PM and 6AM (server time)
+      const afterHoursRows = await this.db('audit_events')
+        .select('user_id')
+        .count('* as access_count')
+        .min('timestamp as first_access')
+        .max('timestamp as last_access')
+        .where('created_at', '>=', since)
+        .whereRaw("(EXTRACT(HOUR FROM timestamp) >= 22 OR EXTRACT(HOUR FROM timestamp) < 6)")
+        .groupBy('user_id');
+
+      for (const row of afterHoursRows) {
+        const count = Number(row.access_count);
+        if (count > 0) {
+          anomalies.push({
+            type: 'after_hours_access',
+            userId: row.user_id as string,
+            count,
+            timeRange: {
+              start: row.first_access as string,
+              end: row.last_access as string,
+            },
+            severity: count > 50 ? 'high' : count > 10 ? 'medium' : 'low',
+          });
+        }
+      }
+
+      // 3. Rapid sequential access: >50 requests by a single user in 5-minute windows
+      // We approximate by checking total requests in the window grouped by user
+      const rapidAccessRows = await this.db('audit_events')
+        .select('user_id')
+        .select(this.db.raw("date_trunc('minute', timestamp) - (EXTRACT(MINUTE FROM timestamp)::integer % 5) * interval '1 minute' as window_start"))
+        .count('* as access_count')
+        .where('created_at', '>=', since)
+        .groupBy('user_id', this.db.raw("date_trunc('minute', timestamp) - (EXTRACT(MINUTE FROM timestamp)::integer % 5) * interval '1 minute'"))
+        .havingRaw('count(*) > 50');
+
+      for (const row of rapidAccessRows) {
+        const windowStart = new Date(row.window_start as string);
+        const windowEnd = new Date(windowStart.getTime() + 5 * 60 * 1000);
+        anomalies.push({
+          type: 'rapid_sequential_access',
+          userId: row.user_id as string,
+          count: Number(row.access_count),
+          timeRange: {
+            start: windowStart.toISOString(),
+            end: windowEnd.toISOString(),
+          },
+          severity: Number(row.access_count) > 200 ? 'critical' : 'high',
+        });
+      }
+
+      this.logger.info('Audit anomaly detection completed', {
+        hours,
+        anomaliesFound: anomalies.length,
+      });
+
+      return anomalies;
+    } catch (error) {
+      this.handleError('Failed to detect audit anomalies', error);
     }
   }
 

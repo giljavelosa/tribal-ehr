@@ -11,8 +11,10 @@ import { systemHealthService } from '../services/system-health.service';
 import { responseTimeService } from '../services/response-time.service';
 import { patientNotificationService } from '../services/patient-notification.service';
 import { responseTimeCollector } from '../middleware/response-time';
+import { db } from '../config/database';
 import { logger } from '../utils/logger';
 import { NotFoundError, ValidationError } from '../utils/errors';
+import { qualityMeasuresService } from '../services/quality-measures.service';
 
 const router = Router();
 
@@ -154,6 +156,30 @@ router.put(
     try {
       const { id } = req.params;
       const updateData = req.body;
+
+      // If role is being changed, invalidate all active sessions for the user
+      // to prevent privilege escalation via stale tokens
+      if (updateData.role) {
+        const invalidatedSessions = await db('revoked_tokens')
+          .where({ user_id: id })
+          .count('* as count')
+          .first();
+
+        // Revoke all active sessions for this user by inserting a blanket
+        // revocation keyed on a role-change marker
+        await db('revoked_tokens').insert({
+          token_id: `role_change_${id}_${Date.now()}`,
+          user_id: id,
+          revoked_at: new Date(),
+          reason: 'role_change',
+        }).onConflict('token_id').ignore();
+
+        logger.info('Sessions invalidated due to role change', {
+          targetUserId: id,
+          newRole: updateData.role,
+          adminUserId: req.user!.id,
+        });
+      }
 
       auditService.log({
         userId: req.user!.id,
@@ -599,13 +625,96 @@ router.get(
   '/reports/census',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
+      // Total active / inactive counts
+      const statusCounts = await db('patients')
+        .select('active')
+        .count('* as count')
+        .groupBy('active');
+
+      let totalActive = 0;
+      let totalInactive = 0;
+      for (const row of statusCounts) {
+        const count = Number(row.count) || 0;
+        if (row.active) {
+          totalActive = count;
+        } else {
+          totalInactive = count;
+        }
+      }
+
+      // Breakdown by gender (using the 'sex' column, labelled as 'gender' for the frontend)
+      const genderRows = await db('patients')
+        .select('sex')
+        .count('* as count')
+        .groupBy('sex')
+        .orderBy('count', 'desc');
+
+      const byGender = genderRows.map((row: any) => ({
+        gender: (row.sex as string) || 'Unknown',
+        count: Number(row.count) || 0,
+      }));
+
+      // Breakdown by age group (calculated from date_of_birth)
+      const ageGroupRows = await db('patients')
+        .select(
+          db.raw(`
+            CASE
+              WHEN DATE_PART('year', AGE(CURRENT_DATE, date_of_birth)) < 18 THEN '0-17'
+              WHEN DATE_PART('year', AGE(CURRENT_DATE, date_of_birth)) BETWEEN 18 AND 34 THEN '18-34'
+              WHEN DATE_PART('year', AGE(CURRENT_DATE, date_of_birth)) BETWEEN 35 AND 49 THEN '35-49'
+              WHEN DATE_PART('year', AGE(CURRENT_DATE, date_of_birth)) BETWEEN 50 AND 64 THEN '50-64'
+              ELSE '65+'
+            END AS age_group
+          `)
+        )
+        .count('* as count')
+        .groupBy('age_group')
+        .orderByRaw(`
+          CASE age_group
+            WHEN '0-17' THEN 1
+            WHEN '18-34' THEN 2
+            WHEN '35-49' THEN 3
+            WHEN '50-64' THEN 4
+            WHEN '65+' THEN 5
+          END
+        `);
+
+      const byAgeGroup = ageGroupRows.map((row: any) => ({
+        ageGroup: row.age_group as string,
+        count: Number(row.count) || 0,
+      }));
+
+      // Breakdown by race (JSONB array - extract first element)
+      const raceRows = await db('patients')
+        .select(db.raw("COALESCE(race->>0, 'Unknown') AS race_value"))
+        .count('* as count')
+        .groupBy('race_value')
+        .orderBy('count', 'desc');
+
+      const byRace = raceRows.map((row: any) => ({
+        race: (row.race_value as string) || 'Unknown',
+        count: Number(row.count) || 0,
+      }));
+
+      // Breakdown by preferred language
+      const languageRows = await db('patients')
+        .select(db.raw("COALESCE(preferred_language, 'Unknown') AS language"))
+        .count('* as count')
+        .groupBy('language')
+        .orderBy('count', 'desc');
+
+      const byLanguage = languageRows.map((row: any) => ({
+        language: (row.language as string) || 'Unknown',
+        count: Number(row.count) || 0,
+      }));
+
       const census = {
-        totalActive: 0,
-        totalInactive: 0,
-        byGender: [],
-        byAgeGroup: [],
-        byRace: [],
-        byLanguage: [],
+        totalActive,
+        totalInactive,
+        byGender,
+        byAgeGroup,
+        byRace,
+        byLanguage,
       };
 
       res.json(census);
@@ -619,12 +728,90 @@ router.get(
   '/reports/encounters',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
+      const { dateFrom, dateTo } = req.query as { dateFrom?: string; dateTo?: string };
+
+      // Base query builder with optional date range
+      const applyDateFilter = (qb: ReturnType<typeof db>) => {
+        if (dateFrom) {
+          qb.where('encounters.period_start', '>=', dateFrom as string);
+        }
+        if (dateTo) {
+          qb.where('encounters.period_start', '<=', dateTo as string);
+        }
+        return qb;
+      };
+
+      // Total encounters in period
+      const totalResult = await applyDateFilter(
+        db('encounters').count('* as count')
+      ).first();
+      const total = Number(totalResult?.count) || 0;
+
+      // Breakdown by type (using type_display or class_code as fallback)
+      const typeRows = await applyDateFilter(
+        db('encounters')
+          .select(db.raw("COALESCE(NULLIF(type_display, ''), class_code, 'Unknown') AS encounter_type"))
+          .count('* as count')
+          .groupBy('encounter_type')
+      ).orderBy('count', 'desc');
+
+      const byType = typeRows.map((row: any) => ({
+        type: (row.encounter_type as string) || 'Unknown',
+        count: Number(row.count) || 0,
+      }));
+
+      // Breakdown by provider (join with users via created_by)
+      const providerRows = await applyDateFilter(
+        db('encounters')
+          .leftJoin('users', 'encounters.created_by', 'users.id')
+          .select(
+            db.raw(
+              "COALESCE(CONCAT(users.first_name, ' ', users.last_name), 'Unassigned') AS provider_name"
+            )
+          )
+          .count('* as count')
+          .groupBy('provider_name')
+      ).orderBy('count', 'desc');
+
+      const byProvider = providerRows.map((row: any) => ({
+        provider: (row.provider_name as string) || 'Unassigned',
+        count: Number(row.count) || 0,
+      }));
+
+      // Breakdown by location (join with locations table)
+      const locationRows = await applyDateFilter(
+        db('encounters')
+          .leftJoin('locations', 'encounters.location_id', 'locations.id')
+          .select(db.raw("COALESCE(locations.name, 'Unknown') AS location_name"))
+          .count('* as count')
+          .groupBy('location_name')
+      ).orderBy('count', 'desc');
+
+      const byLocation = locationRows.map((row: any) => ({
+        location: (row.location_name as string) || 'Unknown',
+        count: Number(row.count) || 0,
+      }));
+
+      // Monthly trend (group by month of period_start)
+      const monthRows = await applyDateFilter(
+        db('encounters')
+          .select(db.raw("TO_CHAR(period_start, 'YYYY-MM') AS month"))
+          .count('* as count')
+          .whereNotNull('period_start')
+          .groupBy('month')
+      ).orderBy('month', 'asc');
+
+      const byMonth = monthRows.map((row: any) => ({
+        month: (row.month as string) || 'Unknown',
+        count: Number(row.count) || 0,
+      }));
+
       const encounters = {
-        total: 0,
-        byType: [],
-        byProvider: [],
-        byLocation: [],
-        byMonth: [],
+        total,
+        byType,
+        byProvider,
+        byLocation,
+        byMonth,
       };
 
       res.json(encounters);
@@ -638,7 +825,48 @@ router.get(
   '/reports/quality-measures',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      res.json([]);
+      // Default measurement period: current calendar year
+      const now = new Date();
+      const defaultStart = `${now.getFullYear()}-01-01`;
+      const defaultEnd = now.toISOString().split('T')[0];
+
+      const { dateFrom, dateTo } = req.query as { dateFrom?: string; dateTo?: string };
+      const period = {
+        start: dateFrom || defaultStart,
+        end: dateTo || defaultEnd,
+      };
+
+      // Quality measure targets (industry-standard thresholds)
+      const measureTargets: Record<string, number> = {
+        'CMS165v12': 70,  // BP control
+        'CMS122v12': 20,  // A1c poor control (inverse - lower is better)
+        'CMS69v12': 70,   // BMI screening
+        'CMS2v13': 60,    // Depression screening
+        'CMS117v12': 80,  // Childhood immunization
+        'CMS347v7': 70,   // Statin therapy
+      };
+
+      const measureResults = await qualityMeasuresService.calculateAllMeasures(period);
+
+      const qualityMeasures = measureResults.map((result) => {
+        const target = measureTargets[result.measureId] ?? 70;
+        // For inverse measures (CMS122), "met" means rate is BELOW target
+        const isInverse = result.measureId === 'CMS122v12';
+        const met = isInverse ? result.rate <= target : result.rate >= target;
+
+        return {
+          id: result.measureId,
+          name: result.measureName,
+          description: result.description,
+          numerator: result.numerator,
+          denominator: result.denominator,
+          rate: result.rate,
+          target,
+          met,
+        };
+      });
+
+      res.json(qualityMeasures);
     } catch (error) {
       next(error);
     }
@@ -649,7 +877,45 @@ router.get(
   '/reports/immunization-rates',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      res.json([]);
+      // Count all active patients as the eligible population
+      const eligibleResult = await db('patients')
+        .where('active', true)
+        .count('* as count')
+        .first();
+      const totalEligible = Number(eligibleResult?.count) || 0;
+
+      if (totalEligible === 0) {
+        res.json([]);
+        return;
+      }
+
+      // Get distinct vaccines and the count of unique patients immunized per vaccine
+      const vaccineRows = await db('immunizations')
+        .join('patients', 'immunizations.patient_id', 'patients.id')
+        .where('patients.active', true)
+        .where('immunizations.status', 'completed')
+        .select(
+          'immunizations.vaccine_code_code',
+          db.raw("COALESCE(MAX(immunizations.vaccine_code_display), immunizations.vaccine_code_code) AS vaccine_name")
+        )
+        .countDistinct('immunizations.patient_id as immunized_count')
+        .groupBy('immunizations.vaccine_code_code')
+        .orderBy('immunized_count', 'desc');
+
+      const immunizationRates = vaccineRows.map(
+        (row: any) => {
+          const immunized = Number(row.immunized_count) || 0;
+          const rate = totalEligible > 0 ? Math.round((immunized / totalEligible) * 10000) / 100 : 0;
+          return {
+            vaccine: (row.vaccine_name as string) || (row.vaccine_code_code as string) || 'Unknown',
+            eligible: totalEligible,
+            immunized,
+            rate,
+          };
+        }
+      );
+
+      res.json(immunizationRates);
     } catch (error) {
       next(error);
     }

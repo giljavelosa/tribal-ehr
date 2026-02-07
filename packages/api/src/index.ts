@@ -4,12 +4,38 @@ import { logger } from './utils/logger';
 import { closeDatabaseConnection } from './config/database';
 import { connectRedis, closeRedisConnection } from './config/redis';
 import { connectRabbitMQ, closeRabbitMQConnection } from './config/rabbitmq';
+import { startScheduler, stopScheduler } from './scheduler';
+import { startConsumers, stopConsumers } from './workers/message-consumer';
+import { validateEncryptionConfig } from './utils/encryption';
 import http from 'http';
 
 let server: http.Server;
 
 async function startServer(): Promise<void> {
   try {
+    // Validate encryption configuration early
+    const encryptionStatus = validateEncryptionConfig();
+
+    for (const warning of encryptionStatus.warnings) {
+      logger.warn(`Encryption config: ${warning}`);
+    }
+
+    for (const error of encryptionStatus.errors) {
+      logger.error(`Encryption config: ${error}`);
+    }
+
+    if (encryptionStatus.valid) {
+      logger.info('Encryption configuration validated', {
+        keyVersion: encryptionStatus.keyVersion,
+        hasPreviousKey: encryptionStatus.hasPreviousKey,
+      });
+    } else {
+      logger.error(
+        'Encryption configuration is invalid. Encrypted fields will not work correctly.'
+      );
+      // Do not crash – allows development environments without a key to still start
+    }
+
     // Initialize external connections
     logger.info('Initializing service connections...');
 
@@ -40,6 +66,16 @@ async function startServer(): Promise<void> {
         port,
         environment: config.server.nodeEnv,
         pid: process.pid,
+      });
+
+      // Start background job scheduler after server is listening
+      startScheduler();
+
+      // Start RabbitMQ message consumers
+      startConsumers().catch((error) => {
+        logger.warn('Failed to start message consumers', {
+          error: error instanceof Error ? error.message : String(error),
+        });
       });
     });
 
@@ -85,6 +121,10 @@ async function gracefulShutdown(signal: string): Promise<void> {
   }
 
   try {
+    // Stop scheduled background jobs and message consumers
+    stopScheduler();
+    await stopConsumers();
+
     // Close connections in parallel with a timeout
     const shutdownTimeout = setTimeout(() => {
       logger.error('Graceful shutdown timed out, forcing exit');

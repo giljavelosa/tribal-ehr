@@ -19,14 +19,41 @@ import { authenticate } from '../middleware/auth';
 const router = Router();
 
 // ---------------------------------------------------------------------------
-// Create Appointment
+// Recurrence helpers
+// ---------------------------------------------------------------------------
+interface RecurrenceOptions {
+  pattern: 'weekly' | 'biweekly' | 'monthly' | 'quarterly';
+  endDate?: string;
+  occurrences?: number;
+}
+
+function getRecurrenceIntervalMs(pattern: RecurrenceOptions['pattern']): number {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  switch (pattern) {
+    case 'weekly':
+      return 7 * DAY_MS;
+    case 'biweekly':
+      return 14 * DAY_MS;
+    case 'monthly':
+      return 30 * DAY_MS;
+    case 'quarterly':
+      return 91 * DAY_MS;
+    default:
+      return 7 * DAY_MS;
+  }
+}
+
+const MAX_RECURRING_APPOINTMENTS = 52; // Safety cap
+
+// ---------------------------------------------------------------------------
+// Create Appointment (with optional recurrence)
 // ---------------------------------------------------------------------------
 router.post(
   '/appointments',
   authenticate,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const appointment = await schedulingService.createAppointment({
+      const baseData = {
         patientId: req.body.patientId,
         providerId: req.body.providerId,
         locationId: req.body.locationId,
@@ -39,9 +66,81 @@ router.post(
         duration: req.body.duration,
         patientInstructions: req.body.patientInstructions,
         comment: req.body.comment,
-      });
+      };
 
-      res.status(201).json({ data: appointment });
+      const recurrence: RecurrenceOptions | undefined = req.body.recurrence;
+
+      // If no recurrence, create a single appointment
+      if (!recurrence || !recurrence.pattern) {
+        const appointment = await schedulingService.createAppointment(baseData);
+        return res.status(201).json({ data: appointment });
+      }
+
+      // Validate recurrence pattern
+      const validPatterns = ['weekly', 'biweekly', 'monthly', 'quarterly'];
+      if (!validPatterns.includes(recurrence.pattern)) {
+        return res.status(400).json({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: `Invalid recurrence pattern. Must be one of: ${validPatterns.join(', ')}`,
+          },
+        });
+      }
+
+      // Determine how many appointments to create
+      const intervalMs = getRecurrenceIntervalMs(recurrence.pattern);
+      const baseStart = new Date(baseData.startTime);
+      let count = recurrence.occurrences || MAX_RECURRING_APPOINTMENTS;
+
+      if (recurrence.endDate) {
+        const end = new Date(recurrence.endDate);
+        const maxByDate = Math.floor((end.getTime() - baseStart.getTime()) / intervalMs) + 1;
+        count = Math.min(count, maxByDate);
+      }
+
+      count = Math.min(Math.max(count, 1), MAX_RECURRING_APPOINTMENTS);
+
+      // Calculate base duration for offset on endTime
+      const baseDuration = baseData.duration || 30;
+      const baseEnd = baseData.endTime ? new Date(baseData.endTime) : null;
+      const durationMs = baseDuration * 60 * 1000;
+
+      const appointments = [];
+      const errors = [];
+
+      for (let i = 0; i < count; i++) {
+        const offsetMs = i * intervalMs;
+        const start = new Date(baseStart.getTime() + offsetMs);
+        const end = baseEnd
+          ? new Date(baseEnd.getTime() + offsetMs)
+          : new Date(start.getTime() + durationMs);
+
+        try {
+          const appt = await schedulingService.createAppointment({
+            ...baseData,
+            startTime: start.toISOString(),
+            endTime: end.toISOString(),
+          });
+          appointments.push(appt);
+        } catch (err: any) {
+          // Log conflict but continue creating remaining appointments
+          errors.push({
+            index: i,
+            date: start.toISOString(),
+            message: err.message || 'Failed to create appointment',
+          });
+        }
+      }
+
+      res.status(201).json({
+        data: appointments,
+        recurrence: {
+          pattern: recurrence.pattern,
+          requested: count,
+          created: appointments.length,
+          errors: errors.length > 0 ? errors : undefined,
+        },
+      });
     } catch (error) {
       next(error);
     }

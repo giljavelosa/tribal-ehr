@@ -6,7 +6,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { authenticate, requireRole } from '../middleware/auth';
 import { auditService } from '../services/audit.service';
 import { logger } from '../utils/logger';
-import { NotFoundError } from '../utils/errors';
+import { NotFoundError, ValidationError } from '../utils/errors';
 
 const router = Router();
 
@@ -69,11 +69,9 @@ router.get(
   '/verify-integrity',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      // In production, this would:
-      // 1. Read all audit records in order
-      // 2. Recompute hash chain: hash(prev_hash + current_record_data)
-      // 3. Compare computed hash with stored hash
-      // 4. Report any mismatches
+      const limit = parseInt(req.query.limit as string, 10) || 1000;
+
+      const result = await auditService.verifyIntegrity(limit);
 
       auditService.log({
         userId: req.user!.id,
@@ -85,22 +83,123 @@ router.get(
         endpoint: req.originalUrl,
         method: 'GET',
         statusCode: 200,
-        clinicalContext: 'Audit log integrity verification requested',
+        clinicalContext: `Audit log integrity verification: ${result.valid ? 'PASSED' : 'FAILED'} (${result.checkedRecords}/${result.totalRecords} records checked)`,
         sessionId: req.user!.sessionId,
         userAgent: req.headers['user-agent'],
       });
 
-      const result = {
-        valid: true,
-        totalRecords: 0,
-        checkedRecords: 0,
-        invalidRecords: 0,
-        message: 'Audit log integrity verified successfully. Hash chain is intact.',
-        verifiedAt: new Date().toISOString(),
+      res.json({
+        ...result,
+        message: result.valid
+          ? 'Audit log integrity verified successfully. Hash chain is intact.'
+          : `Audit log integrity check FAILED. Chain break detected at record ${result.firstBreak}.`,
+        verifiedAt: result.lastVerified,
         verifiedBy: req.user!.id,
-      };
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
-      res.json(result);
+// ---------------------------------------------------------------------------
+// POST /digest - Generate a signed audit digest for a date range
+// ---------------------------------------------------------------------------
+
+router.post(
+  '/digest',
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { startDate, endDate } = req.body;
+
+      if (!startDate || typeof startDate !== 'string') {
+        throw new ValidationError('startDate is required (ISO 8601 format)');
+      }
+      if (!endDate || typeof endDate !== 'string') {
+        throw new ValidationError('endDate is required (ISO 8601 format)');
+      }
+
+      // Validate date formats
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      if (isNaN(start.getTime())) {
+        throw new ValidationError('startDate is not a valid date');
+      }
+      if (isNaN(end.getTime())) {
+        throw new ValidationError('endDate is not a valid date');
+      }
+      if (start >= end) {
+        throw new ValidationError('startDate must be before endDate');
+      }
+
+      const digest = await auditService.generateDigest(
+        startDate,
+        endDate,
+        req.user!.id
+      );
+
+      auditService.log({
+        userId: req.user!.id,
+        userRole: req.user!.role,
+        ipAddress: req.ip || 'unknown',
+        action: 'CREATE',
+        resourceType: 'AuditDigest',
+        resourceId: digest.id,
+        endpoint: req.originalUrl,
+        method: 'POST',
+        statusCode: 201,
+        clinicalContext: `Audit digest generated for ${startDate} to ${endDate} (${digest.recordCount} records)`,
+        sessionId: req.user!.sessionId,
+        userAgent: req.headers['user-agent'],
+      });
+
+      res.status(201).json({ data: digest });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+// ---------------------------------------------------------------------------
+// GET /anomalies - Detect audit anomalies
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/anomalies',
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const hours = parseInt(req.query.hours as string, 10) || 24;
+
+      if (hours < 1 || hours > 720) {
+        throw new ValidationError('hours must be between 1 and 720 (30 days)');
+      }
+
+      const anomalies = await auditService.detectAnomalies(hours);
+
+      auditService.log({
+        userId: req.user!.id,
+        userRole: req.user!.role,
+        ipAddress: req.ip || 'unknown',
+        action: 'READ',
+        resourceType: 'AuditAnomaly',
+        resourceId: 'anomaly-detection',
+        endpoint: req.originalUrl,
+        method: 'GET',
+        statusCode: 200,
+        clinicalContext: `Audit anomaly detection: ${anomalies.length} anomalies found in last ${hours} hours`,
+        sessionId: req.user!.sessionId,
+        userAgent: req.headers['user-agent'],
+      });
+
+      res.json({
+        data: anomalies,
+        total: anomalies.length,
+        period: {
+          hours,
+          from: new Date(Date.now() - hours * 60 * 60 * 1000).toISOString(),
+          to: new Date().toISOString(),
+        },
+      });
     } catch (error) {
       next(error);
     }

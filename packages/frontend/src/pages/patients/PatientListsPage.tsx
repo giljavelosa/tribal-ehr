@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   Plus,
   Search,
@@ -10,6 +10,8 @@ import {
   ChevronUp,
   Star,
   Stethoscope,
+  Loader2,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   Card,
@@ -40,78 +42,16 @@ import {
 } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
-
-interface PatientEntry {
-  id: string;
-  name: string;
-  mrn: string;
-}
-
-interface PatientList {
-  id: string;
-  name: string;
-  description: string;
-  listType: 'custom' | 'provider' | 'shared';
-  patientCount: number;
-  isDefault: boolean;
-  patients: PatientEntry[];
-}
-
-const mockLists: PatientList[] = [
-  {
-    id: '1',
-    name: 'My Active Patients',
-    description: 'Currently managing',
-    listType: 'custom',
-    patientCount: 12,
-    isDefault: true,
-    patients: [
-      { id: 'p1', name: 'John Smith', mrn: 'MRN-100001' },
-      { id: 'p2', name: 'Mary Johnson', mrn: 'MRN-100002' },
-      { id: 'p3', name: 'Robert Williams', mrn: 'MRN-100003' },
-      { id: 'p4', name: 'Sarah Davis', mrn: 'MRN-100004' },
-      { id: 'p5', name: 'James Brown', mrn: 'MRN-100005' },
-    ],
-  },
-  {
-    id: '2',
-    name: 'Diabetes Follow-up',
-    description: 'Patients needing A1c monitoring',
-    listType: 'custom',
-    patientCount: 8,
-    isDefault: false,
-    patients: [
-      { id: 'p2', name: 'Mary Johnson', mrn: 'MRN-100002' },
-      { id: 'p6', name: 'Patricia Clark', mrn: 'MRN-100006' },
-      { id: 'p7', name: 'Michael Wilson', mrn: 'MRN-100007' },
-    ],
-  },
-  {
-    id: '3',
-    name: 'Post-Surgical Follow-up',
-    description: 'Patients with recent surgical procedures',
-    listType: 'custom',
-    patientCount: 5,
-    isDefault: false,
-    patients: [
-      { id: 'p3', name: 'Robert Williams', mrn: 'MRN-100003' },
-      { id: 'p8', name: 'Linda Martinez', mrn: 'MRN-100008' },
-    ],
-  },
-];
-
-const mockProviderPatients: PatientEntry[] = [
-  { id: 'p1', name: 'John Smith', mrn: 'MRN-100001' },
-  { id: 'p2', name: 'Mary Johnson', mrn: 'MRN-100002' },
-  { id: 'p3', name: 'Robert Williams', mrn: 'MRN-100003' },
-  { id: 'p4', name: 'Sarah Davis', mrn: 'MRN-100004' },
-  { id: 'p5', name: 'James Brown', mrn: 'MRN-100005' },
-  { id: 'p6', name: 'Patricia Clark', mrn: 'MRN-100006' },
-  { id: 'p7', name: 'Michael Wilson', mrn: 'MRN-100007' },
-  { id: 'p8', name: 'Linda Martinez', mrn: 'MRN-100008' },
-  { id: 'p9', name: 'David Anderson', mrn: 'MRN-100009' },
-  { id: 'p10', name: 'Jennifer Taylor', mrn: 'MRN-100010' },
-];
+import {
+  usePatientLists,
+  usePatientListDetail,
+  useCreatePatientList,
+  useAddPatientToList,
+  useRemovePatientFromList,
+  usePatients,
+  type PatientListItem,
+  type PatientListMember,
+} from '@/hooks/use-api';
 
 const listTypeColors: Record<string, string> = {
   custom: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400',
@@ -120,7 +60,6 @@ const listTypeColors: Record<string, string> = {
 };
 
 export function PatientListsPage() {
-  const [lists, setLists] = useState<PatientList[]>(mockLists);
   const [expandedListId, setExpandedListId] = useState<string | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [addPatientDialogOpen, setAddPatientDialogOpen] = useState(false);
@@ -131,25 +70,43 @@ export function PatientListsPage() {
     description: '',
   });
 
+  // Fetch patient lists from API
+  const { data: lists, isLoading: listsLoading, error: listsError } = usePatientLists();
+
+  // Fetch expanded list detail (with members)
+  const { data: expandedListDetail, isLoading: detailLoading } = usePatientListDetail(expandedListId || '');
+
+  // Fetch patients for search (provider panel)
+  const { data: patientsData, isLoading: patientsLoading } = usePatients({
+    name: patientSearchQuery || undefined,
+    limit: 20,
+  });
+
+  // Mutations
+  const createListMutation = useCreatePatientList();
+  const addPatientMutation = useAddPatientToList();
+  const removePatientMutation = useRemovePatientFromList();
+
   const handleToggleExpand = (id: string) => {
     setExpandedListId((prev) => (prev === id ? null : id));
   };
 
   const handleCreateList = useCallback(() => {
     if (!newListForm.name.trim()) return;
-    const newList: PatientList = {
-      id: `list-${Date.now()}`,
-      name: newListForm.name,
-      description: newListForm.description,
-      listType: 'custom',
-      patientCount: 0,
-      isDefault: false,
-      patients: [],
-    };
-    setLists((prev) => [...prev, newList]);
-    setCreateDialogOpen(false);
-    setNewListForm({ name: '', description: '' });
-  }, [newListForm]);
+    createListMutation.mutate(
+      {
+        name: newListForm.name,
+        description: newListForm.description || undefined,
+        listType: 'custom',
+      },
+      {
+        onSuccess: () => {
+          setCreateDialogOpen(false);
+          setNewListForm({ name: '', description: '' });
+        },
+      },
+    );
+  }, [newListForm, createListMutation]);
 
   const handleOpenAddPatient = (listId: string) => {
     setAddPatientListId(listId);
@@ -158,45 +115,68 @@ export function PatientListsPage() {
   };
 
   const handleAddPatientToList = useCallback(
-    (patient: PatientEntry) => {
+    (patientId: string) => {
       if (!addPatientListId) return;
-      setLists((prev) =>
-        prev.map((list) => {
-          if (list.id !== addPatientListId) return list;
-          if (list.patients.some((p) => p.id === patient.id)) return list;
-          return {
-            ...list,
-            patients: [...list.patients, patient],
-            patientCount: list.patientCount + 1,
-          };
-        }),
+      addPatientMutation.mutate(
+        { listId: addPatientListId, patientId },
+        {
+          onSuccess: () => {
+            setAddPatientDialogOpen(false);
+            setAddPatientListId(null);
+          },
+        },
       );
-      setAddPatientDialogOpen(false);
-      setAddPatientListId(null);
     },
-    [addPatientListId],
+    [addPatientListId, addPatientMutation],
   );
 
-  const handleRemovePatient = useCallback((listId: string, patientId: string) => {
-    setLists((prev) =>
-      prev.map((list) => {
-        if (list.id !== listId) return list;
-        return {
-          ...list,
-          patients: list.patients.filter((p) => p.id !== patientId),
-          patientCount: Math.max(0, list.patientCount - 1),
-        };
-      }),
-    );
-  }, []);
+  const handleRemovePatient = useCallback(
+    (listId: string, patientId: string) => {
+      removePatientMutation.mutate({ listId, patientId });
+    },
+    [removePatientMutation],
+  );
 
-  const filteredSearchPatients = patientSearchQuery
-    ? mockProviderPatients.filter(
-        (p) =>
-          p.name.toLowerCase().includes(patientSearchQuery.toLowerCase()) ||
-          p.mrn.toLowerCase().includes(patientSearchQuery.toLowerCase()),
-      )
-    : mockProviderPatients;
+  // Provider patients from paginated response
+  const providerPatients = patientsData?.data ?? [];
+
+  // Filter search patients for the add dialog
+  const searchPatients = useMemo(() => {
+    if (!patientSearchQuery) return providerPatients;
+    return providerPatients;
+  }, [providerPatients, patientSearchQuery]);
+
+  // Members for the expanded list
+  const expandedMembers: PatientListMember[] = expandedListDetail?.members ?? [];
+
+  if (listsLoading) {
+    return (
+      <div className="flex min-h-[400px] items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (listsError) {
+    return (
+      <div className="flex min-h-[400px] items-center justify-center" role="alert">
+        <Card className="max-w-md">
+          <CardContent className="flex flex-col items-center gap-4 p-6">
+            <AlertTriangle className="h-10 w-10 text-destructive" />
+            <div className="text-center">
+              <p className="font-semibold">Unable to load patient lists</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {listsError instanceof Error ? listsError.message : 'Please try again later.'}
+              </p>
+            </div>
+            <Button onClick={() => window.location.reload()}>Refresh</Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  const listData = lists ?? [];
 
   return (
     <div className="space-y-6">
@@ -227,7 +207,7 @@ export function PatientListsPage() {
 
         {/* My Lists Tab */}
         <TabsContent value="my-lists" className="space-y-4">
-          {lists.length === 0 ? (
+          {listData.length === 0 ? (
             <Card>
               <CardContent className="flex flex-col items-center gap-3 py-12">
                 <List className="h-12 w-12 text-muted-foreground" />
@@ -244,7 +224,7 @@ export function PatientListsPage() {
               </CardContent>
             </Card>
           ) : (
-            lists.map((list) => {
+            listData.map((list) => {
               const isExpanded = expandedListId === list.id;
 
               return (
@@ -259,7 +239,7 @@ export function PatientListsPage() {
                           {list.name}
                         </CardTitle>
                         <CardDescription className="mt-1">
-                          {list.description}
+                          {list.description || 'No description'}
                         </CardDescription>
                       </div>
                       <div className="flex items-center gap-2">
@@ -309,7 +289,11 @@ export function PatientListsPage() {
 
                     {isExpanded && (
                       <div className="mt-4">
-                        {list.patients.length === 0 ? (
+                        {detailLoading ? (
+                          <div className="flex items-center justify-center py-6">
+                            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                          </div>
+                        ) : expandedMembers.length === 0 ? (
                           <div className="rounded-lg border border-dashed p-6 text-center">
                             <Users className="mx-auto h-8 w-8 text-muted-foreground" />
                             <p className="mt-2 text-sm text-muted-foreground">
@@ -326,16 +310,21 @@ export function PatientListsPage() {
                               </TableRow>
                             </TableHeader>
                             <TableBody>
-                              {list.patients.map((patient) => (
-                                <TableRow key={patient.id}>
-                                  <TableCell className="font-medium">{patient.name}</TableCell>
-                                  <TableCell className="font-mono text-sm">{patient.mrn}</TableCell>
+                              {expandedMembers.map((member) => (
+                                <TableRow key={member.id}>
+                                  <TableCell className="font-medium">
+                                    {member.patientName || 'Unknown'}
+                                  </TableCell>
+                                  <TableCell className="font-mono text-sm">
+                                    {member.patientMrn || '--'}
+                                  </TableCell>
                                   <TableCell>
                                     <Button
                                       variant="ghost"
                                       size="sm"
                                       className="gap-1 text-destructive hover:text-destructive"
-                                      onClick={() => handleRemovePatient(list.id, patient.id)}
+                                      onClick={() => handleRemovePatient(list.id, member.patientId)}
+                                      disabled={removePatientMutation.isPending}
                                     >
                                       <Trash2 className="h-3.5 w-3.5" />
                                       Remove
@@ -368,29 +357,37 @@ export function PatientListsPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Patient Name</TableHead>
-                    <TableHead>MRN</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {mockProviderPatients.map((patient) => (
-                    <TableRow key={patient.id}>
-                      <TableCell className="font-medium">{patient.name}</TableCell>
-                      <TableCell className="font-mono text-sm">{patient.mrn}</TableCell>
-                    </TableRow>
-                  ))}
-                  {mockProviderPatients.length === 0 && (
+              {patientsLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
                     <TableRow>
-                      <TableCell colSpan={2} className="h-24 text-center text-muted-foreground">
-                        No patients currently assigned.
-                      </TableCell>
+                      <TableHead>Patient Name</TableHead>
+                      <TableHead>MRN</TableHead>
                     </TableRow>
-                  )}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {providerPatients.map((patient) => (
+                      <TableRow key={patient.id}>
+                        <TableCell className="font-medium">
+                          {patient.firstName} {patient.lastName}
+                        </TableCell>
+                        <TableCell className="font-mono text-sm">{patient.mrn}</TableCell>
+                      </TableRow>
+                    ))}
+                    {providerPatients.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={2} className="h-24 text-center text-muted-foreground">
+                          No patients currently assigned.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -433,7 +430,13 @@ export function PatientListsPage() {
             <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleCreateList} disabled={!newListForm.name.trim()}>
+            <Button
+              onClick={handleCreateList}
+              disabled={!newListForm.name.trim() || createListMutation.isPending}
+            >
+              {createListMutation.isPending ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : null}
               Create List
             </Button>
           </DialogFooter>
@@ -463,20 +466,27 @@ export function PatientListsPage() {
             <Separator />
 
             <div className="max-h-[300px] overflow-y-auto">
-              {filteredSearchPatients.length === 0 ? (
+              {patientsLoading ? (
+                <div className="flex items-center justify-center py-4">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : searchPatients.length === 0 ? (
                 <p className="py-4 text-center text-sm text-muted-foreground">
                   No patients found matching your search.
                 </p>
               ) : (
                 <div className="space-y-1">
-                  {filteredSearchPatients.map((patient) => (
+                  {searchPatients.map((patient) => (
                     <button
                       key={patient.id}
                       className="flex w-full items-center justify-between rounded-md px-3 py-2 text-left hover:bg-muted"
-                      onClick={() => handleAddPatientToList(patient)}
+                      onClick={() => handleAddPatientToList(patient.id)}
+                      disabled={addPatientMutation.isPending}
                     >
                       <div>
-                        <p className="text-sm font-medium">{patient.name}</p>
+                        <p className="text-sm font-medium">
+                          {patient.firstName} {patient.lastName}
+                        </p>
                         <p className="text-xs text-muted-foreground">{patient.mrn}</p>
                       </div>
                       <Plus className="h-4 w-4 text-muted-foreground" />

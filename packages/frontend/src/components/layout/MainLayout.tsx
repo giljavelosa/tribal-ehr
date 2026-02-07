@@ -46,6 +46,12 @@ export function MainLayout() {
 
   return (
     <div className="flex h-screen overflow-hidden">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:px-4 focus:py-2 focus:bg-background focus:text-foreground focus:ring-2"
+      >
+        Skip to main content
+      </a>
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
       <div className="flex flex-1 flex-col overflow-hidden">
@@ -62,7 +68,7 @@ export function MainLayout() {
           />
         )}
 
-        <main className="flex-1 overflow-y-auto scroll-smooth-clinical bg-background p-4 lg:p-6">
+        <main id="main-content" className="flex-1 overflow-y-auto scroll-smooth-clinical bg-background p-4 lg:p-6">
           <div className="mx-auto max-w-7xl animate-fade-in">
             <Outlet />
           </div>

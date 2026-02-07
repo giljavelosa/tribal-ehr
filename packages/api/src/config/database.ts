@@ -3,6 +3,12 @@ import path from 'path';
 import { config } from './index';
 import { logger } from '../utils/logger';
 
+// IMPORTANT: Row-Level Security (RLS) is enabled on clinical tables
+// (patients, encounters, observations, conditions, medication_requests,
+// allergy_intolerances, clinical_notes). RLS policies are bypassed by table
+// owners / superusers. In production, the application MUST connect as a
+// non-superuser PostgreSQL role so that RLS policies are enforced.
+// See migration 041_add_row_level_security.ts for policy details.
 const knexConfig: Knex.Knex.Config = {
   client: 'pg',
   connection: config.database.url,

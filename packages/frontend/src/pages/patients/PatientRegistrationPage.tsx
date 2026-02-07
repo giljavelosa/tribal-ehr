@@ -37,44 +37,81 @@ import { Separator } from '@/components/ui/separator';
 import { useCreatePatient } from '@/hooks/use-api';
 import { SimilarPatientsAlert } from '@/components/patient/SimilarPatientsAlert';
 
-// ---- OMB Race/Ethnicity Mappings (CDC Race & Ethnicity Code Set) ----
+// ---- USCDI v3 Coded Value Sets (SNOMED CT / HL7 / CDC) ----
 
-const RACE_CODE_MAP: Record<string, { code: string; display: string; system: string }> = {
-  'american-indian': { code: '1002-5', display: 'American Indian or Alaska Native', system: 'urn:oid:2.16.840.1.113883.6.238' },
-  'asian': { code: '2028-9', display: 'Asian', system: 'urn:oid:2.16.840.1.113883.6.238' },
-  'black': { code: '2054-5', display: 'Black or African American', system: 'urn:oid:2.16.840.1.113883.6.238' },
-  'pacific-islander': { code: '2076-8', display: 'Native Hawaiian or Other Pacific Islander', system: 'urn:oid:2.16.840.1.113883.6.238' },
-  'white': { code: '2106-3', display: 'White', system: 'urn:oid:2.16.840.1.113883.6.238' },
-  'two-or-more': { code: '2131-1', display: 'Other Race', system: 'urn:oid:2.16.840.1.113883.6.238' },
-  'other': { code: '2131-1', display: 'Other Race', system: 'urn:oid:2.16.840.1.113883.6.238' },
-  'declined': { code: 'ASKU', display: 'Asked but no answer', system: 'http://terminology.hl7.org/CodeSystem/v3-NullFlavor' },
-};
+interface DemographicsCode {
+  code: string;
+  system: string;
+  display: string;
+}
 
-// USCDI v3 Gender Identity (SNOMED CT)
-const GENDER_IDENTITY_MAP: Record<string, { code: string; display: string; system: string }> = {
-  'male': { code: '446151000124109', display: 'Identifies as male gender', system: 'http://snomed.info/sct' },
-  'female': { code: '446141000124107', display: 'Identifies as female gender', system: 'http://snomed.info/sct' },
-  'non-binary': { code: '33791000087105', display: 'Identifies as nonbinary gender', system: 'http://snomed.info/sct' },
-  'transgender-male': { code: '407377005', display: 'Female-to-male transsexual', system: 'http://snomed.info/sct' },
-  'transgender-female': { code: '407376001', display: 'Male-to-female transsexual', system: 'http://snomed.info/sct' },
-  'other': { code: 'OTH', display: 'Other', system: 'http://terminology.hl7.org/CodeSystem/v3-NullFlavor' },
-  'declined': { code: 'ASKU', display: 'Asked but no answer', system: 'http://terminology.hl7.org/CodeSystem/v3-NullFlavor' },
-};
+interface LanguageCode {
+  code: string;
+  display: string;
+}
 
-// USCDI v3 Sexual Orientation (SNOMED CT)
-const SEXUAL_ORIENTATION_MAP: Record<string, { code: string; display: string; system: string }> = {
-  'straight': { code: '20430005', display: 'Heterosexual', system: 'http://snomed.info/sct' },
-  'gay-lesbian': { code: '38628009', display: 'Homosexual', system: 'http://snomed.info/sct' },
-  'bisexual': { code: '42035005', display: 'Bisexual', system: 'http://snomed.info/sct' },
-  'other': { code: 'OTH', display: 'Other', system: 'http://terminology.hl7.org/CodeSystem/v3-NullFlavor' },
-  'declined': { code: 'ASKU', display: 'Asked but no answer', system: 'http://terminology.hl7.org/CodeSystem/v3-NullFlavor' },
-  'unknown': { code: 'UNK', display: 'Unknown', system: 'http://terminology.hl7.org/CodeSystem/v3-NullFlavor' },
-};
+// Gender Identity - SNOMED CT + HL7 gender-identity value set
+const GENDER_IDENTITY_CODES: DemographicsCode[] = [
+  { code: '446151000124109', system: 'http://snomed.info/sct', display: 'Identifies as male gender' },
+  { code: '446141000124107', system: 'http://snomed.info/sct', display: 'Identifies as female gender' },
+  { code: '33791000087105', system: 'http://snomed.info/sct', display: 'Identifies as nonbinary gender' },
+  { code: 'OTH', system: 'http://terminology.hl7.org/CodeSystem/v3-NullFlavor', display: 'Other' },
+  { code: 'ASKU', system: 'http://terminology.hl7.org/CodeSystem/v3-NullFlavor', display: 'Asked but unknown' },
+  { code: 'UNK', system: 'http://terminology.hl7.org/CodeSystem/v3-NullFlavor', display: 'Unknown' },
+];
 
-const ETHNICITY_CODE_MAP: Record<string, { code: string; display: string; system: string }> = {
-  'hispanic': { code: '2135-2', display: 'Hispanic or Latino', system: 'urn:oid:2.16.840.1.113883.6.238' },
-  'not-hispanic': { code: '2186-5', display: 'Not Hispanic or Latino', system: 'urn:oid:2.16.840.1.113883.6.238' },
-};
+// Sexual Orientation - SNOMED CT
+const SEXUAL_ORIENTATION_CODES: DemographicsCode[] = [
+  { code: '38628009', system: 'http://snomed.info/sct', display: 'Lesbian, gay, or homosexual' },
+  { code: '20430005', system: 'http://snomed.info/sct', display: 'Heterosexual' },
+  { code: '42035005', system: 'http://snomed.info/sct', display: 'Bisexual' },
+  { code: 'OTH', system: 'http://terminology.hl7.org/CodeSystem/v3-NullFlavor', display: 'Other' },
+  { code: 'ASKU', system: 'http://terminology.hl7.org/CodeSystem/v3-NullFlavor', display: 'Asked but unknown' },
+  { code: 'UNK', system: 'http://terminology.hl7.org/CodeSystem/v3-NullFlavor', display: 'Unknown' },
+];
+
+// Race - CDC Race & Ethnicity Code Set (OMB categories)
+const RACE_CODES: DemographicsCode[] = [
+  { code: '1002-5', system: 'urn:oid:2.16.840.1.113883.6.238', display: 'American Indian or Alaska Native' },
+  { code: '2028-9', system: 'urn:oid:2.16.840.1.113883.6.238', display: 'Asian' },
+  { code: '2054-5', system: 'urn:oid:2.16.840.1.113883.6.238', display: 'Black or African American' },
+  { code: '2076-8', system: 'urn:oid:2.16.840.1.113883.6.238', display: 'Native Hawaiian or Other Pacific Islander' },
+  { code: '2106-3', system: 'urn:oid:2.16.840.1.113883.6.238', display: 'White' },
+  { code: 'ASKU', system: 'http://terminology.hl7.org/CodeSystem/v3-NullFlavor', display: 'Asked but unknown' },
+  { code: 'UNK', system: 'http://terminology.hl7.org/CodeSystem/v3-NullFlavor', display: 'Unknown' },
+];
+
+// Ethnicity - CDC
+const ETHNICITY_CODES: DemographicsCode[] = [
+  { code: '2135-2', system: 'urn:oid:2.16.840.1.113883.6.238', display: 'Hispanic or Latino' },
+  { code: '2186-5', system: 'urn:oid:2.16.840.1.113883.6.238', display: 'Not Hispanic or Latino' },
+  { code: 'ASKU', system: 'http://terminology.hl7.org/CodeSystem/v3-NullFlavor', display: 'Asked but unknown' },
+  { code: 'UNK', system: 'http://terminology.hl7.org/CodeSystem/v3-NullFlavor', display: 'Unknown' },
+];
+
+// Preferred Language - BCP-47 (most common US + tribal languages)
+const LANGUAGE_CODES: LanguageCode[] = [
+  { code: 'en', display: 'English' },
+  { code: 'es', display: 'Spanish' },
+  { code: 'zh', display: 'Chinese' },
+  { code: 'vi', display: 'Vietnamese' },
+  { code: 'ko', display: 'Korean' },
+  { code: 'tl', display: 'Tagalog' },
+  { code: 'ar', display: 'Arabic' },
+  { code: 'fr', display: 'French' },
+  { code: 'de', display: 'German' },
+  { code: 'ru', display: 'Russian' },
+  { code: 'ja', display: 'Japanese' },
+  { code: 'nv', display: 'Navajo' },
+  { code: 'chr', display: 'Cherokee' },
+  { code: 'oj', display: 'Ojibwe' },
+  { code: 'dak', display: 'Dakota' },
+];
+
+/** Look up a code entry by code value */
+function findCode(codes: DemographicsCode[], codeValue: string): DemographicsCode | undefined {
+  return codes.find((c) => c.code === codeValue);
+}
 
 // ---- Validation Schema ----
 
@@ -310,18 +347,22 @@ export function PatientRegistrationPage() {
           dob: data.dob,
           gender: data.gender,
           sex: data.sex,
-          genderIdentity: data.genderIdentity && GENDER_IDENTITY_MAP[data.genderIdentity]
-            ? { coding: [GENDER_IDENTITY_MAP[data.genderIdentity]], text: GENDER_IDENTITY_MAP[data.genderIdentity].display }
-            : undefined,
-          sexualOrientation: data.sexualOrientation && SEXUAL_ORIENTATION_MAP[data.sexualOrientation]
-            ? { coding: [SEXUAL_ORIENTATION_MAP[data.sexualOrientation]], text: SEXUAL_ORIENTATION_MAP[data.sexualOrientation].display }
-            : undefined,
-          race: data.race && RACE_CODE_MAP[data.race]
-            ? [RACE_CODE_MAP[data.race]]
-            : undefined,
-          ethnicity: data.ethnicity && ETHNICITY_CODE_MAP[data.ethnicity]
-            ? { coding: [ETHNICITY_CODE_MAP[data.ethnicity]], text: ETHNICITY_CODE_MAP[data.ethnicity].display }
-            : undefined,
+          genderIdentity: (() => {
+            const gi = data.genderIdentity ? findCode(GENDER_IDENTITY_CODES, data.genderIdentity) : undefined;
+            return gi ? { coding: [gi], text: gi.display } : undefined;
+          })(),
+          sexualOrientation: (() => {
+            const so = data.sexualOrientation ? findCode(SEXUAL_ORIENTATION_CODES, data.sexualOrientation) : undefined;
+            return so ? { coding: [so], text: so.display } : undefined;
+          })(),
+          race: (() => {
+            const r = data.race ? findCode(RACE_CODES, data.race) : undefined;
+            return r ? [r] : undefined;
+          })(),
+          ethnicity: (() => {
+            const e = data.ethnicity ? findCode(ETHNICITY_CODES, data.ethnicity) : undefined;
+            return e ? { coding: [e], text: e.display } : undefined;
+          })(),
           preferredLanguage: data.preferredLanguage || undefined,
           maritalStatus: data.maritalStatus || undefined,
           phone: data.phone,
@@ -394,18 +435,22 @@ export function PatientRegistrationPage() {
           dob: data.dob,
           gender: data.gender,
           sex: data.sex,
-          genderIdentity: data.genderIdentity && GENDER_IDENTITY_MAP[data.genderIdentity]
-            ? { coding: [GENDER_IDENTITY_MAP[data.genderIdentity]], text: GENDER_IDENTITY_MAP[data.genderIdentity].display }
-            : undefined,
-          sexualOrientation: data.sexualOrientation && SEXUAL_ORIENTATION_MAP[data.sexualOrientation]
-            ? { coding: [SEXUAL_ORIENTATION_MAP[data.sexualOrientation]], text: SEXUAL_ORIENTATION_MAP[data.sexualOrientation].display }
-            : undefined,
-          race: data.race && RACE_CODE_MAP[data.race]
-            ? [RACE_CODE_MAP[data.race]]
-            : undefined,
-          ethnicity: data.ethnicity && ETHNICITY_CODE_MAP[data.ethnicity]
-            ? { coding: [ETHNICITY_CODE_MAP[data.ethnicity]], text: ETHNICITY_CODE_MAP[data.ethnicity].display }
-            : undefined,
+          genderIdentity: (() => {
+            const gi = data.genderIdentity ? findCode(GENDER_IDENTITY_CODES, data.genderIdentity) : undefined;
+            return gi ? { coding: [gi], text: gi.display } : undefined;
+          })(),
+          sexualOrientation: (() => {
+            const so = data.sexualOrientation ? findCode(SEXUAL_ORIENTATION_CODES, data.sexualOrientation) : undefined;
+            return so ? { coding: [so], text: so.display } : undefined;
+          })(),
+          race: (() => {
+            const r = data.race ? findCode(RACE_CODES, data.race) : undefined;
+            return r ? [r] : undefined;
+          })(),
+          ethnicity: (() => {
+            const e = data.ethnicity ? findCode(ETHNICITY_CODES, data.ethnicity) : undefined;
+            return e ? { coding: [e], text: e.display } : undefined;
+          })(),
           preferredLanguage: data.preferredLanguage || undefined,
           maritalStatus: data.maritalStatus || undefined,
           phone: data.phone,
@@ -445,7 +490,7 @@ export function PatientRegistrationPage() {
     const fieldError = errors[field];
     if (!fieldError) return null;
     return (
-      <p className="text-xs text-destructive">{fieldError.message as string}</p>
+      <p className="text-xs text-destructive" id={`${field}-error`} role="alert">{fieldError.message as string}</p>
     );
   };
 
@@ -457,8 +502,9 @@ export function PatientRegistrationPage() {
           variant="ghost"
           size="icon"
           onClick={() => navigate('/patients')}
+          aria-label="Back to patient list"
         >
-          <ArrowLeft className="h-5 w-5" />
+          <ArrowLeft className="h-5 w-5" aria-hidden="true" />
         </Button>
         <div>
           <h1 className="text-3xl font-bold tracking-tight">
@@ -471,12 +517,12 @@ export function PatientRegistrationPage() {
       </div>
 
       {/* Step Indicator */}
-      <div className="flex items-center justify-center gap-1 sm:gap-2">
+      <nav aria-label="Registration progress" className="flex items-center justify-center gap-1 sm:gap-2">
         {steps.map((step, i) => {
           const StepIcon = step.icon;
           return (
             <React.Fragment key={step.id}>
-              <div className="flex items-center gap-1 sm:gap-2">
+              <div className="flex items-center gap-1 sm:gap-2" aria-current={currentStep === step.id ? 'step' : undefined}>
                 <div
                   className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-medium transition-colors ${
                     currentStep > step.id
@@ -485,6 +531,7 @@ export function PatientRegistrationPage() {
                         ? 'bg-primary text-primary-foreground'
                         : 'bg-muted text-muted-foreground'
                   }`}
+                  aria-hidden="true"
                 >
                   {currentStep > step.id ? (
                     <Check className="h-4 w-4" />
@@ -501,6 +548,9 @@ export function PatientRegistrationPage() {
                 >
                   {step.name}
                 </span>
+                <span className="sr-only">
+                  {currentStep > step.id ? '(completed)' : currentStep === step.id ? '(current step)' : '(upcoming)'}
+                </span>
               </div>
               {i < steps.length - 1 && (
                 <div
@@ -512,10 +562,10 @@ export function PatientRegistrationPage() {
             </React.Fragment>
           );
         })}
-      </div>
+      </nav>
 
       {submitError && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" role="alert">
           <AlertDescription>{submitError}</AlertDescription>
         </Alert>
       )}
@@ -565,7 +615,9 @@ export function PatientRegistrationPage() {
                     <Input
                       id="firstName"
                       {...register('firstName')}
+                      aria-required="true"
                       aria-invalid={!!errors.firstName}
+                      aria-describedby={errors.firstName ? 'firstName-error' : undefined}
                     />
                     {renderFieldError('firstName')}
                   </div>
@@ -578,7 +630,9 @@ export function PatientRegistrationPage() {
                     <Input
                       id="lastName"
                       {...register('lastName')}
+                      aria-required="true"
                       aria-invalid={!!errors.lastName}
+                      aria-describedby={errors.lastName ? 'lastName-error' : undefined}
                     />
                     {renderFieldError('lastName')}
                   </div>
@@ -591,12 +645,14 @@ export function PatientRegistrationPage() {
                       id="dob"
                       type="date"
                       {...register('dob')}
+                      aria-required="true"
                       aria-invalid={!!errors.dob}
+                      aria-describedby={errors.dob ? 'dob-error' : undefined}
                     />
                     {renderFieldError('dob')}
                   </div>
                   <div className="space-y-2">
-                    <Label>Gender *</Label>
+                    <Label id="gender-label">Gender *</Label>
                     <Controller
                       name="gender"
                       control={control}
@@ -605,7 +661,7 @@ export function PatientRegistrationPage() {
                           value={field.value}
                           onValueChange={field.onChange}
                         >
-                          <SelectTrigger aria-invalid={!!errors.gender}>
+                          <SelectTrigger aria-required="true" aria-invalid={!!errors.gender} aria-labelledby="gender-label" aria-describedby={errors.gender ? 'gender-error' : undefined}>
                             <SelectValue placeholder="Select gender" />
                           </SelectTrigger>
                           <SelectContent>
@@ -631,7 +687,7 @@ export function PatientRegistrationPage() {
                     {renderFieldError('gender')}
                   </div>
                   <div className="space-y-2">
-                    <Label>Sex at Birth *</Label>
+                    <Label id="sex-label">Sex at Birth *</Label>
                     <Controller
                       name="sex"
                       control={control}
@@ -640,7 +696,7 @@ export function PatientRegistrationPage() {
                           value={field.value}
                           onValueChange={field.onChange}
                         >
-                          <SelectTrigger aria-invalid={!!errors.sex}>
+                          <SelectTrigger aria-required="true" aria-invalid={!!errors.sex} aria-labelledby="sex-label" aria-describedby={errors.sex ? 'sex-error' : undefined}>
                             <SelectValue placeholder="Select sex" />
                           </SelectTrigger>
                           <SelectContent>
@@ -670,13 +726,11 @@ export function PatientRegistrationPage() {
                             <SelectValue placeholder="Select gender identity" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="male">Identifies as Male</SelectItem>
-                            <SelectItem value="female">Identifies as Female</SelectItem>
-                            <SelectItem value="non-binary">Non-binary</SelectItem>
-                            <SelectItem value="transgender-male">Transgender Male (FTM)</SelectItem>
-                            <SelectItem value="transgender-female">Transgender Female (MTF)</SelectItem>
-                            <SelectItem value="other">Other</SelectItem>
-                            <SelectItem value="declined">Declined to specify</SelectItem>
+                            {GENDER_IDENTITY_CODES.map((gi) => (
+                              <SelectItem key={gi.code} value={gi.code}>
+                                {gi.display}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       )}
@@ -696,12 +750,11 @@ export function PatientRegistrationPage() {
                             <SelectValue placeholder="Select sexual orientation" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="straight">Straight (Heterosexual)</SelectItem>
-                            <SelectItem value="gay-lesbian">Gay or Lesbian (Homosexual)</SelectItem>
-                            <SelectItem value="bisexual">Bisexual</SelectItem>
-                            <SelectItem value="other">Something else</SelectItem>
-                            <SelectItem value="declined">Declined to specify</SelectItem>
-                            <SelectItem value="unknown">Don't know</SelectItem>
+                            {SEXUAL_ORIENTATION_CODES.map((so) => (
+                              <SelectItem key={so.code} value={so.code}>
+                                {so.display}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       )}
@@ -724,24 +777,11 @@ export function PatientRegistrationPage() {
                             <SelectValue placeholder="Select race" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="american-indian">
-                              American Indian or Alaska Native
-                            </SelectItem>
-                            <SelectItem value="asian">Asian</SelectItem>
-                            <SelectItem value="black">
-                              Black or African American
-                            </SelectItem>
-                            <SelectItem value="pacific-islander">
-                              Native Hawaiian or Pacific Islander
-                            </SelectItem>
-                            <SelectItem value="white">White</SelectItem>
-                            <SelectItem value="two-or-more">
-                              Two or More Races
-                            </SelectItem>
-                            <SelectItem value="other">Other</SelectItem>
-                            <SelectItem value="declined">
-                              Declined to specify
-                            </SelectItem>
+                            {RACE_CODES.map((r) => (
+                              <SelectItem key={r.code} value={r.code}>
+                                {r.display}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       )}
@@ -761,15 +801,11 @@ export function PatientRegistrationPage() {
                             <SelectValue placeholder="Select ethnicity" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="hispanic">
-                              Hispanic or Latino
-                            </SelectItem>
-                            <SelectItem value="not-hispanic">
-                              Not Hispanic or Latino
-                            </SelectItem>
-                            <SelectItem value="declined">
-                              Declined to specify
-                            </SelectItem>
+                            {ETHNICITY_CODES.map((e) => (
+                              <SelectItem key={e.code} value={e.code}>
+                                {e.display}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       )}
@@ -789,15 +825,11 @@ export function PatientRegistrationPage() {
                             <SelectValue placeholder="Select language" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="en">English</SelectItem>
-                            <SelectItem value="es">Spanish</SelectItem>
-                            <SelectItem value="zh">Chinese</SelectItem>
-                            <SelectItem value="tl">Tagalog</SelectItem>
-                            <SelectItem value="vi">Vietnamese</SelectItem>
-                            <SelectItem value="ar">Arabic</SelectItem>
-                            <SelectItem value="fr">French</SelectItem>
-                            <SelectItem value="ko">Korean</SelectItem>
-                            <SelectItem value="other">Other</SelectItem>
+                            {LANGUAGE_CODES.map((lang) => (
+                              <SelectItem key={lang.code} value={lang.code}>
+                                {lang.display}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       )}
@@ -862,7 +894,9 @@ export function PatientRegistrationPage() {
                     id="addressLine1"
                     placeholder="123 Main Street"
                     {...register('addressLine1')}
+                    aria-required="true"
                     aria-invalid={!!errors.addressLine1}
+                    aria-describedby={errors.addressLine1 ? 'addressLine1-error' : undefined}
                   />
                   {renderFieldError('addressLine1')}
                 </div>
@@ -880,7 +914,9 @@ export function PatientRegistrationPage() {
                     <Input
                       id="city"
                       {...register('city')}
+                      aria-required="true"
                       aria-invalid={!!errors.city}
+                      aria-describedby={errors.city ? 'city-error' : undefined}
                     />
                     {renderFieldError('city')}
                   </div>
@@ -891,7 +927,9 @@ export function PatientRegistrationPage() {
                       placeholder="e.g., CA"
                       maxLength={2}
                       {...register('state')}
+                      aria-required="true"
                       aria-invalid={!!errors.state}
+                      aria-describedby={errors.state ? 'state-error' : undefined}
                     />
                     {renderFieldError('state')}
                   </div>
@@ -901,7 +939,9 @@ export function PatientRegistrationPage() {
                       id="postalCode"
                       placeholder="12345"
                       {...register('postalCode')}
+                      aria-required="true"
                       aria-invalid={!!errors.postalCode}
+                      aria-describedby={errors.postalCode ? 'postalCode-error' : undefined}
                     />
                     {renderFieldError('postalCode')}
                   </div>
@@ -914,7 +954,9 @@ export function PatientRegistrationPage() {
                       type="tel"
                       placeholder="(555) 123-4567"
                       {...register('phone')}
+                      aria-required="true"
                       aria-invalid={!!errors.phone}
+                      aria-describedby={errors.phone ? 'phone-error' : undefined}
                     />
                     {renderFieldError('phone')}
                   </div>
@@ -954,7 +996,9 @@ export function PatientRegistrationPage() {
                       <Input
                         id="ec1Name"
                         {...register('emergencyContact1Name')}
+                        aria-required="true"
                         aria-invalid={!!errors.emergencyContact1Name}
+                        aria-describedby={errors.emergencyContact1Name ? 'emergencyContact1Name-error' : undefined}
                       />
                       {renderFieldError('emergencyContact1Name')}
                     </div>
@@ -965,12 +1009,14 @@ export function PatientRegistrationPage() {
                         type="tel"
                         placeholder="(555) 123-4567"
                         {...register('emergencyContact1Phone')}
+                        aria-required="true"
                         aria-invalid={!!errors.emergencyContact1Phone}
+                        aria-describedby={errors.emergencyContact1Phone ? 'emergencyContact1Phone-error' : undefined}
                       />
                       {renderFieldError('emergencyContact1Phone')}
                     </div>
                     <div className="space-y-2">
-                      <Label>Relationship *</Label>
+                      <Label id="ec1-relationship-label">Relationship *</Label>
                       <Controller
                         name="emergencyContact1Relationship"
                         control={control}
@@ -980,9 +1026,12 @@ export function PatientRegistrationPage() {
                             onValueChange={field.onChange}
                           >
                             <SelectTrigger
+                              aria-required="true"
                               aria-invalid={
                                 !!errors.emergencyContact1Relationship
                               }
+                              aria-labelledby="ec1-relationship-label"
+                              aria-describedby={errors.emergencyContact1Relationship ? 'emergencyContact1Relationship-error' : undefined}
                             >
                               <SelectValue placeholder="Select" />
                             </SelectTrigger>
@@ -1179,7 +1228,7 @@ export function PatientRegistrationPage() {
                       {formValues.race && (
                         <div>
                           <span className="text-muted-foreground">Race: </span>
-                          {formValues.race}
+                          {findCode(RACE_CODES, formValues.race)?.display || formValues.race}
                         </div>
                       )}
                       {formValues.preferredLanguage && (
@@ -1187,7 +1236,7 @@ export function PatientRegistrationPage() {
                           <span className="text-muted-foreground">
                             Language:{' '}
                           </span>
-                          {formValues.preferredLanguage}
+                          {LANGUAGE_CODES.find((l) => l.code === formValues.preferredLanguage)?.display || formValues.preferredLanguage}
                         </div>
                       )}
                     </div>
@@ -1275,7 +1324,9 @@ export function PatientRegistrationPage() {
                           id="consentToTreat"
                           checked={field.value}
                           onCheckedChange={field.onChange}
+                          aria-required="true"
                           aria-invalid={!!errors.consentToTreat}
+                          aria-describedby={errors.consentToTreat ? 'consentToTreat-error' : undefined}
                         />
                       )}
                     />
@@ -1291,7 +1342,7 @@ export function PatientRegistrationPage() {
                         prescribed by authorized healthcare providers.
                       </p>
                       {errors.consentToTreat && (
-                        <p className="mt-1 text-xs text-destructive">
+                        <p className="mt-1 text-xs text-destructive" id="consentToTreat-error" role="alert">
                           {errors.consentToTreat.message}
                         </p>
                       )}
@@ -1366,18 +1417,18 @@ export function PatientRegistrationPage() {
           {/* Navigation buttons */}
           <div className="flex items-center justify-between border-t p-6">
             <Button type="button" variant="outline" onClick={goToPrevStep}>
-              <ArrowLeft className="mr-2 h-4 w-4" />
+              <ArrowLeft className="mr-2 h-4 w-4" aria-hidden="true" />
               {currentStep > 1 ? 'Previous' : 'Cancel'}
             </Button>
 
             {currentStep < 5 ? (
               <Button type="button" onClick={goToNextStep}>
                 Next
-                <ArrowRight className="ml-2 h-4 w-4" />
+                <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
               </Button>
             ) : (
-              <Button type="submit" disabled={isSubmitting}>
-                <Check className="mr-2 h-4 w-4" />
+              <Button type="submit" disabled={isSubmitting} aria-busy={isSubmitting}>
+                <Check className="mr-2 h-4 w-4" aria-hidden="true" />
                 {isSubmitting ? 'Registering...' : 'Register Patient'}
               </Button>
             )}

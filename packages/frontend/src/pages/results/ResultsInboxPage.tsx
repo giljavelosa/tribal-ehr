@@ -4,9 +4,9 @@ import {
   CheckCircle2,
   AlertTriangle,
   Eye,
-  Filter,
   Bell,
   Send,
+  Loader2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -49,132 +49,19 @@ import { Textarea } from '@/components/ui/textarea';
 import { usePatientContext } from '@/stores/patient-context-store';
 import { usePatientContextFromUrl } from '@/hooks/use-patient-context-url';
 import api from '@/lib/api';
+import {
+  useResultsInbox,
+  useAcknowledgeResult,
+  useBulkAcknowledgeResults,
+  type ResultsInboxItem,
+} from '@/hooks/use-api';
 
-interface LabResult {
-  id: string;
-  patient: string;
-  patientId: string;
-  test: string;
-  result: string;
-  units: string;
-  referenceRange: string;
-  flag: 'Normal' | 'Abnormal' | 'Critical';
-  received: string;
-  reviewed: boolean;
-  reviewedDate?: string;
-  resultType: 'lab' | 'imaging' | 'pathology';
+// Map priority to a display-friendly flag
+function getPriorityFlag(result: ResultsInboxItem): 'Normal' | 'Abnormal' | 'Critical' {
+  if (result.priority === 'stat') return 'Critical';
+  if (result.priority === 'urgent' || result.priority === 'asap') return 'Abnormal';
+  return 'Normal';
 }
-
-const mockResults: LabResult[] = [
-  {
-    id: 'RES-001',
-    patient: 'Robert Williams',
-    patientId: 'P-001',
-    test: 'Potassium',
-    result: '6.2',
-    units: 'mEq/L',
-    referenceRange: '3.5-5.0',
-    flag: 'Critical',
-    received: '2024-01-12T08:30:00',
-    reviewed: false,
-    resultType: 'lab',
-  },
-  {
-    id: 'RES-002',
-    patient: 'Mary Johnson',
-    patientId: 'P-002',
-    test: 'CBC with Differential',
-    result: 'WBC: 12.5, Hgb: 11.2, Plt: 245',
-    units: 'multiple',
-    referenceRange: 'See panel',
-    flag: 'Abnormal',
-    received: '2024-01-12T07:15:00',
-    reviewed: false,
-    resultType: 'lab',
-  },
-  {
-    id: 'RES-003',
-    patient: 'John Smith',
-    patientId: 'P-003',
-    test: 'Chest X-Ray',
-    result: 'Bilateral infiltrates noted. Possible pneumonia.',
-    units: '',
-    referenceRange: '',
-    flag: 'Abnormal',
-    received: '2024-01-11T14:20:00',
-    reviewed: false,
-    resultType: 'imaging',
-  },
-  {
-    id: 'RES-004',
-    patient: 'Sarah Davis',
-    patientId: 'P-004',
-    test: 'Urinalysis',
-    result: 'Within normal limits',
-    units: '',
-    referenceRange: '',
-    flag: 'Normal',
-    received: '2024-01-11T10:45:00',
-    reviewed: true,
-    reviewedDate: '2024-01-11T16:00:00',
-    resultType: 'lab',
-  },
-  {
-    id: 'RES-005',
-    patient: 'James Brown',
-    patientId: 'P-005',
-    test: 'HbA1c',
-    result: '8.9',
-    units: '%',
-    referenceRange: '< 5.7',
-    flag: 'Abnormal',
-    received: '2024-01-10T16:30:00',
-    reviewed: true,
-    reviewedDate: '2024-01-11T09:00:00',
-    resultType: 'lab',
-  },
-  {
-    id: 'RES-006',
-    patient: 'Patricia Clark',
-    patientId: 'P-006',
-    test: 'TSH',
-    result: '0.12',
-    units: 'mIU/L',
-    referenceRange: '0.4-4.0',
-    flag: 'Abnormal',
-    received: '2024-01-10T11:00:00',
-    reviewed: true,
-    reviewedDate: '2024-01-10T15:30:00',
-    resultType: 'lab',
-  },
-  {
-    id: 'RES-007',
-    patient: 'Michael Wilson',
-    patientId: 'P-007',
-    test: 'Lipid Panel',
-    result: 'TC: 188, LDL: 105, HDL: 52, TG: 155',
-    units: 'mg/dL',
-    referenceRange: 'See panel',
-    flag: 'Normal',
-    received: '2024-01-09T09:15:00',
-    reviewed: true,
-    reviewedDate: '2024-01-09T14:00:00',
-    resultType: 'lab',
-  },
-  {
-    id: 'RES-008',
-    patient: 'Robert Williams',
-    patientId: 'P-001',
-    test: 'Troponin I',
-    result: '< 0.01',
-    units: 'ng/mL',
-    referenceRange: '< 0.04',
-    flag: 'Normal',
-    received: '2024-01-12T09:00:00',
-    reviewed: false,
-    resultType: 'lab',
-  },
-];
 
 const flagColors: Record<string, string> = {
   Normal: '',
@@ -184,62 +71,96 @@ const flagColors: Record<string, string> = {
     'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400',
 };
 
+// Map orderType to display type
+function getResultType(orderType: string): string {
+  switch (orderType) {
+    case 'laboratory':
+      return 'lab';
+    case 'imaging':
+      return 'imaging';
+    case 'medication':
+      return 'medication';
+    default:
+      return orderType;
+  }
+}
+
 export function ResultsInboxPage() {
-  const [results, setResults] = useState<LabResult[]>(mockResults);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const activePatient = usePatientContext((s) => s.activePatient);
   usePatientContextFromUrl();
   const [searchQuery, setSearchQuery] = useState(() =>
-    // Pre-filter by active patient name if context is set
-    activePatient ? `${activePatient.firstName} ${activePatient.lastName}` : ''
+    activePatient ? `${activePatient.firstName} ${activePatient.lastName}` : '',
   );
   const [filterType, setFilterType] = useState<string>('all');
   const [filterAbnormal, setFilterAbnormal] = useState(false);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  const [detailResult, setDetailResult] = useState<LabResult | null>(null);
+  const [detailResult, setDetailResult] = useState<ResultsInboxItem | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [notifyOpen, setNotifyOpen] = useState(false);
-  const [notifyResult, setNotifyResult] = useState<LabResult | null>(null);
+  const [notifyResult, setNotifyResult] = useState<ResultsInboxItem | null>(null);
   const [notifyMethod, setNotifyMethod] = useState('phone');
   const [notifyNotes, setNotifyNotes] = useState('');
   const [notifying, setNotifying] = useState(false);
   const [notifiedIds, setNotifiedIds] = useState<Set<string>>(new Set());
+  // Track locally acknowledged IDs for optimistic UI update between refetches
+  const [locallyAcknowledgedIds, setLocallyAcknowledgedIds] = useState<Set<string>>(new Set());
+
+  // API hooks
+  const resultsQuery = useResultsInbox();
+  const acknowledgeMutation = useAcknowledgeResult();
+  const bulkAcknowledgeMutation = useBulkAcknowledgeResults();
+
+  // The API returns unacknowledged results. We treat "acknowledged" as "reviewed".
+  // Since the API only returns unacknowledged results, all items from the query are "unreviewed"
+  // unless locally acknowledged (optimistic).
+  const results = resultsQuery.data ?? [];
+
+  const isAcknowledged = useCallback(
+    (id: string) => locallyAcknowledgedIds.has(id),
+    [locallyAcknowledgedIds],
+  );
 
   const unreviewedResults = useMemo(
-    () => results.filter((r) => !r.reviewed),
-    [results],
+    () => results.filter((r) => !isAcknowledged(r.id)),
+    [results, isAcknowledged],
   );
   const reviewedResults = useMemo(
-    () => results.filter((r) => r.reviewed),
-    [results],
+    () => results.filter((r) => isAcknowledged(r.id)),
+    [results, isAcknowledged],
   );
   const criticalCount = useMemo(
-    () => unreviewedResults.filter((r) => r.flag === 'Critical').length,
+    () => unreviewedResults.filter((r) => getPriorityFlag(r) === 'Critical').length,
     [unreviewedResults],
   );
 
   const applyFilters = useCallback(
-    (list: LabResult[]) => {
+    (list: ResultsInboxItem[]) => {
       return list.filter((r) => {
         if (searchQuery) {
           const q = searchQuery.toLowerCase();
+          const testName = r.codeDisplay || '';
+          const patientId = r.patientId || '';
           if (
-            !r.patient.toLowerCase().includes(q) &&
-            !r.test.toLowerCase().includes(q) &&
-            !r.result.toLowerCase().includes(q)
+            !testName.toLowerCase().includes(q) &&
+            !patientId.toLowerCase().includes(q) &&
+            !(r.notes || '').toLowerCase().includes(q)
           )
             return false;
         }
-        if (filterType !== 'all' && r.resultType !== filterType) return false;
-        if (filterAbnormal && r.flag === 'Normal') return false;
+        if (filterType !== 'all') {
+          const mappedType = getResultType(r.orderType);
+          if (mappedType !== filterType) return false;
+        }
+        if (filterAbnormal && getPriorityFlag(r) === 'Normal') return false;
         if (dateFrom) {
-          const rDate = new Date(r.received);
+          const rDate = new Date(r.orderedAt);
           const fDate = new Date(dateFrom);
           if (rDate < fDate) return false;
         }
         if (dateTo) {
-          const rDate = new Date(r.received);
+          const rDate = new Date(r.orderedAt);
           const tDate = new Date(dateTo);
           tDate.setHours(23, 59, 59, 999);
           if (rDate > tDate) return false;
@@ -275,8 +196,8 @@ export function ResultsInboxPage() {
     });
   };
 
-  const toggleSelectAll = (list: LabResult[]) => {
-    const unreviewedInList = list.filter((r) => !r.reviewed);
+  const toggleSelectAll = (list: ResultsInboxItem[]) => {
+    const unreviewedInList = list.filter((r) => !isAcknowledged(r.id));
     const allSelected = unreviewedInList.every((r) => selectedIds.has(r.id));
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -293,47 +214,38 @@ export function ResultsInboxPage() {
 
   const markAsReviewed = useCallback(
     (id: string) => {
-      setResults((prev) =>
-        prev.map((r) =>
-          r.id === id
-            ? {
-                ...r,
-                reviewed: true,
-                reviewedDate: new Date().toISOString(),
-              }
-            : r,
-        ),
-      );
+      // Optimistic local state update
+      setLocallyAcknowledgedIds((prev) => new Set(prev).add(id));
       setSelectedIds((prev) => {
         const next = new Set(prev);
         next.delete(id);
         return next;
       });
+      // Fire API call
+      acknowledgeMutation.mutate(id);
     },
-    [],
+    [acknowledgeMutation],
   );
 
   const bulkMarkReviewed = useCallback(() => {
-    setResults((prev) =>
-      prev.map((r) =>
-        selectedIds.has(r.id)
-          ? {
-              ...r,
-              reviewed: true,
-              reviewedDate: new Date().toISOString(),
-            }
-          : r,
-      ),
-    );
+    const ids = Array.from(selectedIds);
+    // Optimistic local state
+    setLocallyAcknowledgedIds((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => next.add(id));
+      return next;
+    });
     setSelectedIds(new Set());
-  }, [selectedIds]);
+    // Fire API call
+    bulkAcknowledgeMutation.mutate(ids);
+  }, [selectedIds, bulkAcknowledgeMutation]);
 
-  const openDetail = (result: LabResult) => {
+  const openDetail = (result: ResultsInboxItem) => {
     setDetailResult(result);
     setDetailOpen(true);
   };
 
-  const openNotifyDialog = (result: LabResult) => {
+  const openNotifyDialog = (result: ResultsInboxItem) => {
     setNotifyResult(result);
     setNotifyMethod('phone');
     setNotifyNotes('');
@@ -344,7 +256,7 @@ export function ResultsInboxPage() {
     if (!notifyResult) return;
     setNotifying(true);
     try {
-      await api.post(`/api/v1/results-inbox/${notifyResult.id}/notify-patient`, {
+      await api.post(`/results-inbox/${notifyResult.id}/notify-patient`, {
         patientId: notifyResult.patientId,
         notificationMethod: notifyMethod,
         notes: notifyNotes || undefined,
@@ -361,12 +273,13 @@ export function ResultsInboxPage() {
   const renderFilterBar = () => (
     <div className="mb-4 flex flex-wrap items-center gap-3">
       <div className="relative min-w-[200px] flex-1">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
         <Input
-          placeholder="Search patient, test, result..."
+          placeholder="Search test, patient ID..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           className="pl-9"
+          aria-label="Search results by test name or patient ID"
         />
       </div>
       <Select value={filterType} onValueChange={setFilterType}>
@@ -377,7 +290,7 @@ export function ResultsInboxPage() {
           <SelectItem value="all">All Types</SelectItem>
           <SelectItem value="lab">Lab</SelectItem>
           <SelectItem value="imaging">Imaging</SelectItem>
-          <SelectItem value="pathology">Pathology</SelectItem>
+          <SelectItem value="medication">Medication</SelectItem>
         </SelectContent>
       </Select>
       <div className="flex items-center gap-2">
@@ -386,13 +299,15 @@ export function ResultsInboxPage() {
           value={dateFrom}
           onChange={(e) => setDateFrom(e.target.value)}
           className="w-[140px]"
+          aria-label="Filter from date"
         />
-        <span className="text-muted-foreground">to</span>
+        <span className="text-muted-foreground" aria-hidden="true">to</span>
         <Input
           type="date"
           value={dateTo}
           onChange={(e) => setDateTo(e.target.value)}
           className="w-[140px]"
+          aria-label="Filter to date"
         />
       </div>
       <div className="flex items-center gap-2">
@@ -402,124 +317,137 @@ export function ResultsInboxPage() {
           onCheckedChange={(checked) => setFilterAbnormal(checked === true)}
         />
         <Label htmlFor="filterAbnormal" className="cursor-pointer text-sm">
-          Abnormal only
+          Urgent/Critical only
         </Label>
       </div>
     </div>
   );
 
   const renderResultRow = (
-    result: LabResult,
+    result: ResultsInboxItem,
     showCheckbox: boolean,
     showActions: boolean,
-  ) => (
-    <TableRow
-      key={result.id}
-      className={`${
-        result.flag === 'Critical' && !result.reviewed
-          ? 'bg-destructive/5'
-          : !result.reviewed
-            ? 'bg-primary/5'
-            : ''
-      }`}
-    >
-      {showCheckbox && (
+  ) => {
+    const flag = getPriorityFlag(result);
+    const reviewed = isAcknowledged(result.id);
+    return (
+      <TableRow
+        key={result.id}
+        className={`${
+          flag === 'Critical' && !reviewed
+            ? 'bg-destructive/5'
+            : !reviewed
+              ? 'bg-primary/5'
+              : ''
+        }`}
+      >
+        {showCheckbox && (
+          <TableCell>
+            {!reviewed && (
+              <Checkbox
+                checked={selectedIds.has(result.id)}
+                onCheckedChange={() => toggleSelect(result.id)}
+                aria-label={`Select result ${result.codeDisplay || result.orderType} for patient ${result.patientId}`}
+              />
+            )}
+          </TableCell>
+        )}
+        <TableCell className="font-medium">{result.patientId}</TableCell>
+        <TableCell>{result.codeDisplay || result.orderType}</TableCell>
         <TableCell>
-          {!result.reviewed && (
-            <Checkbox
-              checked={selectedIds.has(result.id)}
-              onCheckedChange={() => toggleSelect(result.id)}
-            />
+          <span className={flag !== 'Normal' ? 'font-semibold' : ''}>
+            {result.notes || result.status}
+          </span>
+        </TableCell>
+        <TableCell>
+          {flag !== 'Normal' ? (
+            <Badge
+              variant={flag === 'Critical' ? 'destructive' : 'outline'}
+              className={flagColors[flag] || ''}
+            >
+              {flag}
+            </Badge>
+          ) : (
+            <Badge variant="outline">Normal</Badge>
           )}
         </TableCell>
-      )}
-      <TableCell className="font-medium">{result.patient}</TableCell>
-      <TableCell>{result.test}</TableCell>
-      <TableCell>
-        <span
-          className={
-            result.flag !== 'Normal' ? 'font-semibold' : ''
-          }
-        >
-          {result.result}
-        </span>
-      </TableCell>
-      <TableCell>
-        {result.flag !== 'Normal' ? (
-          <Badge
-            variant={result.flag === 'Critical' ? 'destructive' : 'outline'}
-            className={flagColors[result.flag] || ''}
-          >
-            {result.flag}
-          </Badge>
-        ) : (
-          <Badge variant="outline">Normal</Badge>
-        )}
-      </TableCell>
-      <TableCell className="whitespace-nowrap">
-        {new Date(result.received).toLocaleString('en-US', {
-          month: 'short',
-          day: 'numeric',
-          year: 'numeric',
-          hour: 'numeric',
-          minute: '2-digit',
-        })}
-      </TableCell>
-      <TableCell>
-        {result.reviewed ? (
-          <Badge
-            variant="outline"
-            className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
-          >
-            Reviewed
-          </Badge>
-        ) : (
-          <Badge variant="secondary">Unreviewed</Badge>
-        )}
-      </TableCell>
-      {showActions && (
-        <TableCell>
-          <div className="flex items-center gap-1">
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1"
-              onClick={() => openDetail(result)}
-            >
-              <Eye className="h-3.5 w-3.5" />
-              Review
-            </Button>
-            {!result.reviewed && (
-              <Button
-                size="sm"
-                onClick={() => markAsReviewed(result.id)}
-              >
-                Sign
-              </Button>
-            )}
-            {result.reviewed && (
-              notifiedIds.has(result.id) ? (
-                <Badge variant="outline" className="bg-green-100 text-green-800">
-                  <Bell className="mr-1 h-3 w-3" />
-                  Notified
-                </Badge>
-              ) : (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1"
-                  onClick={() => openNotifyDialog(result)}
-                >
-                  <Send className="h-3.5 w-3.5" />
-                  Notify
-                </Button>
-              )
-            )}
-          </div>
+        <TableCell className="whitespace-nowrap">
+          {new Date(result.orderedAt).toLocaleString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+          })}
         </TableCell>
-      )}
-    </TableRow>
-  );
+        <TableCell>
+          {reviewed ? (
+            <Badge
+              variant="outline"
+              className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
+            >
+              Reviewed
+            </Badge>
+          ) : (
+            <Badge variant="secondary">Unreviewed</Badge>
+          )}
+        </TableCell>
+        {showActions && (
+          <TableCell>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1"
+                onClick={() => openDetail(result)}
+              >
+                <Eye className="h-3.5 w-3.5" />
+                Review
+              </Button>
+              {!reviewed && (
+                <Button
+                  size="sm"
+                  onClick={() => markAsReviewed(result.id)}
+                  disabled={acknowledgeMutation.isPending}
+                >
+                  Sign
+                </Button>
+              )}
+              {reviewed &&
+                (notifiedIds.has(result.id) ? (
+                  <Badge
+                    variant="outline"
+                    className="bg-green-100 text-green-800"
+                  >
+                    <Bell className="mr-1 h-3 w-3" />
+                    Notified
+                  </Badge>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1"
+                    onClick={() => openNotifyDialog(result)}
+                  >
+                    <Send className="h-3.5 w-3.5" />
+                    Notify
+                  </Button>
+                ))}
+            </div>
+          </TableCell>
+        )}
+      </TableRow>
+    );
+  };
+
+  if (resultsQuery.isLoading) {
+    return (
+      <div className="flex h-64 items-center justify-center" role="status" aria-label="Loading results">
+        <Loader2 className="mr-2 h-6 w-6 animate-spin" aria-hidden="true" />
+        <span className="text-muted-foreground">Loading results...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -563,8 +491,16 @@ export function ResultsInboxPage() {
                   </CardDescription>
                 </div>
                 {selectedIds.size > 0 && (
-                  <Button className="gap-1" onClick={bulkMarkReviewed}>
-                    <CheckCircle2 className="h-4 w-4" />
+                  <Button
+                    className="gap-1"
+                    onClick={bulkMarkReviewed}
+                    disabled={bulkAcknowledgeMutation.isPending}
+                  >
+                    {bulkAcknowledgeMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="h-4 w-4" />
+                    )}
                     Sign Selected ({selectedIds.size})
                   </Button>
                 )}
@@ -572,7 +508,7 @@ export function ResultsInboxPage() {
             </CardHeader>
             <CardContent>
               {renderFilterBar()}
-              <Table>
+              <Table aria-label="Unreviewed test results">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-12">
@@ -586,6 +522,7 @@ export function ResultsInboxPage() {
                         onCheckedChange={() =>
                           toggleSelectAll(filteredUnreviewed)
                         }
+                        aria-label="Select all unreviewed results"
                       />
                     </TableHead>
                     <TableHead>Patient</TableHead>
@@ -626,7 +563,7 @@ export function ResultsInboxPage() {
             </CardHeader>
             <CardContent>
               {renderFilterBar()}
-              <Table>
+              <Table aria-label="Reviewed test results">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Patient</TableHead>
@@ -638,51 +575,52 @@ export function ResultsInboxPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredReviewed.map((result) => (
-                    <TableRow
-                      key={result.id}
-                      className="cursor-pointer"
-                      onClick={() => openDetail(result)}
-                    >
-                      <TableCell className="font-medium">
-                        {result.patient}
-                      </TableCell>
-                      <TableCell>{result.test}</TableCell>
-                      <TableCell>{result.result}</TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={
-                            result.flag === 'Critical'
-                              ? 'destructive'
-                              : result.flag === 'Abnormal'
-                                ? 'outline'
+                  {filteredReviewed.map((result) => {
+                    const flag = getPriorityFlag(result);
+                    return (
+                      <TableRow
+                        key={result.id}
+                        className="cursor-pointer"
+                        onClick={() => openDetail(result)}
+                      >
+                        <TableCell className="font-medium">
+                          {result.patientId}
+                        </TableCell>
+                        <TableCell>{result.codeDisplay || result.orderType}</TableCell>
+                        <TableCell>{result.notes || result.status}</TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={
+                              flag === 'Critical'
+                                ? 'destructive'
                                 : 'outline'
-                          }
-                          className={flagColors[result.flag] || ''}
-                        >
-                          {result.flag}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">
-                        {new Date(result.received).toLocaleDateString(
-                          'en-US',
-                          {
-                            month: 'short',
-                            day: 'numeric',
-                            year: 'numeric',
-                          },
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant="outline"
-                          className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
-                        >
-                          Reviewed
-                        </Badge>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                            }
+                            className={flagColors[flag] || ''}
+                          >
+                            {flag}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          {new Date(result.orderedAt).toLocaleDateString(
+                            'en-US',
+                            {
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric',
+                            },
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant="outline"
+                            className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
+                          >
+                            Reviewed
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                   {filteredReviewed.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={6} className="h-24 text-center">
@@ -706,7 +644,7 @@ export function ResultsInboxPage() {
             </CardHeader>
             <CardContent>
               {renderFilterBar()}
-              <Table>
+              <Table aria-label="All test results">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Patient</TableHead>
@@ -719,80 +657,85 @@ export function ResultsInboxPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredAll.map((result) => (
-                    <TableRow
-                      key={result.id}
-                      className={`cursor-pointer ${
-                        result.flag === 'Critical' && !result.reviewed
-                          ? 'bg-destructive/5'
-                          : !result.reviewed
-                            ? 'bg-primary/5'
-                            : ''
-                      }`}
-                      onClick={() => openDetail(result)}
-                    >
-                      <TableCell className="font-medium">
-                        {result.patient}
-                      </TableCell>
-                      <TableCell>{result.test}</TableCell>
-                      <TableCell>
-                        <span
-                          className={
-                            result.flag !== 'Normal' ? 'font-semibold' : ''
-                          }
-                        >
-                          {result.result}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={
-                            result.flag === 'Critical'
-                              ? 'destructive'
-                              : 'outline'
-                          }
-                          className={flagColors[result.flag] || ''}
-                        >
-                          {result.flag}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">
-                        {new Date(result.received).toLocaleDateString(
-                          'en-US',
-                          {
-                            month: 'short',
-                            day: 'numeric',
-                            year: 'numeric',
-                          },
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {result.reviewed ? (
+                  {filteredAll.map((result) => {
+                    const flag = getPriorityFlag(result);
+                    const reviewed = isAcknowledged(result.id);
+                    return (
+                      <TableRow
+                        key={result.id}
+                        className={`cursor-pointer ${
+                          flag === 'Critical' && !reviewed
+                            ? 'bg-destructive/5'
+                            : !reviewed
+                              ? 'bg-primary/5'
+                              : ''
+                        }`}
+                        onClick={() => openDetail(result)}
+                      >
+                        <TableCell className="font-medium">
+                          {result.patientId}
+                        </TableCell>
+                        <TableCell>{result.codeDisplay || result.orderType}</TableCell>
+                        <TableCell>
+                          <span
+                            className={
+                              flag !== 'Normal' ? 'font-semibold' : ''
+                            }
+                          >
+                            {result.notes || result.status}
+                          </span>
+                        </TableCell>
+                        <TableCell>
                           <Badge
-                            variant="outline"
-                            className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
+                            variant={
+                              flag === 'Critical'
+                                ? 'destructive'
+                                : 'outline'
+                            }
+                            className={flagColors[flag] || ''}
                           >
-                            Reviewed
+                            {flag}
                           </Badge>
-                        ) : (
-                          <Badge variant="secondary">Unreviewed</Badge>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {!result.reviewed && (
-                          <Button
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              markAsReviewed(result.id);
-                            }}
-                          >
-                            Sign
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          {new Date(result.orderedAt).toLocaleDateString(
+                            'en-US',
+                            {
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric',
+                            },
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {reviewed ? (
+                            <Badge
+                              variant="outline"
+                              className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
+                            >
+                              Reviewed
+                            </Badge>
+                          ) : (
+                            <Badge variant="secondary">Unreviewed</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {!reviewed && (
+                            <Button
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                markAsReviewed(result.id);
+                              }}
+                              disabled={acknowledgeMutation.isPending}
+                            >
+                              Sign
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                   {filteredAll.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={7} className="h-24 text-center">
@@ -813,7 +756,7 @@ export function ResultsInboxPage() {
           <DialogHeader>
             <DialogTitle>Notify Patient of Result</DialogTitle>
             <DialogDescription>
-              Record how the patient was notified of: {notifyResult?.test}
+              Record how the patient was notified of: {notifyResult?.codeDisplay || notifyResult?.orderType}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -862,9 +805,9 @@ export function ResultsInboxPage() {
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>{detailResult?.test}</DialogTitle>
+            <DialogTitle>{detailResult?.codeDisplay || detailResult?.orderType}</DialogTitle>
             <DialogDescription>
-              Patient: {detailResult?.patient}
+              Patient: {detailResult?.patientId}
             </DialogDescription>
           </DialogHeader>
           {detailResult && (
@@ -872,55 +815,46 @@ export function ResultsInboxPage() {
               <div className="rounded-lg border p-4 text-center">
                 <span
                   className={`text-2xl font-bold ${
-                    detailResult.flag === 'Critical'
+                    getPriorityFlag(detailResult) === 'Critical'
                       ? 'text-destructive'
-                      : detailResult.flag === 'Abnormal'
+                      : getPriorityFlag(detailResult) === 'Abnormal'
                         ? 'text-amber-700 dark:text-amber-400'
                         : ''
                   }`}
                 >
-                  {detailResult.result}
+                  {detailResult.status}
                 </span>
-                {detailResult.units && (
-                  <span className="ml-2 text-lg text-muted-foreground">
-                    {detailResult.units}
-                  </span>
-                )}
-                {detailResult.flag !== 'Normal' && (
+                {getPriorityFlag(detailResult) !== 'Normal' && (
                   <Badge
                     variant={
-                      detailResult.flag === 'Critical'
+                      getPriorityFlag(detailResult) === 'Critical'
                         ? 'destructive'
                         : 'outline'
                     }
-                    className={`ml-3 ${flagColors[detailResult.flag] || ''}`}
+                    className={`ml-3 ${flagColors[getPriorityFlag(detailResult)] || ''}`}
                   >
-                    {detailResult.flag}
+                    {getPriorityFlag(detailResult)}
                   </Badge>
                 )}
               </div>
 
               <div className="space-y-2 text-sm">
-                {detailResult.referenceRange && (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">
-                      Reference Range
-                    </span>
-                    <span>{detailResult.referenceRange}</span>
-                  </div>
-                )}
-                <Separator />
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Result Type</span>
+                  <span className="text-muted-foreground">Order Type</span>
                   <Badge variant="outline" className="capitalize">
-                    {detailResult.resultType}
+                    {getResultType(detailResult.orderType)}
                   </Badge>
                 </div>
                 <Separator />
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Received</span>
+                  <span className="text-muted-foreground">Priority</span>
+                  <span className="capitalize">{detailResult.priority}</span>
+                </div>
+                <Separator />
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Ordered</span>
                   <span>
-                    {new Date(detailResult.received).toLocaleString('en-US', {
+                    {new Date(detailResult.orderedAt).toLocaleString('en-US', {
                       month: 'short',
                       day: 'numeric',
                       year: 'numeric',
@@ -929,17 +863,13 @@ export function ResultsInboxPage() {
                     })}
                   </span>
                 </div>
-                {detailResult.reviewedDate && (
+                {detailResult.signedAt && (
                   <>
                     <Separator />
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">
-                        Reviewed
-                      </span>
+                      <span className="text-muted-foreground">Signed</span>
                       <span>
-                        {new Date(
-                          detailResult.reviewedDate,
-                        ).toLocaleString('en-US', {
+                        {new Date(detailResult.signedAt).toLocaleString('en-US', {
                           month: 'short',
                           day: 'numeric',
                           year: 'numeric',
@@ -950,6 +880,24 @@ export function ResultsInboxPage() {
                     </div>
                   </>
                 )}
+                {detailResult.clinicalIndication && (
+                  <>
+                    <Separator />
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Clinical Indication</span>
+                      <span>{detailResult.clinicalIndication}</span>
+                    </div>
+                  </>
+                )}
+                {detailResult.notes && (
+                  <>
+                    <Separator />
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Notes</span>
+                      <span>{detailResult.notes}</span>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -957,13 +905,14 @@ export function ResultsInboxPage() {
             <Button variant="outline" onClick={() => setDetailOpen(false)}>
               Close
             </Button>
-            {detailResult && !detailResult.reviewed && (
+            {detailResult && !isAcknowledged(detailResult.id) && (
               <Button
                 className="gap-1"
                 onClick={() => {
                   markAsReviewed(detailResult.id);
                   setDetailOpen(false);
                 }}
+                disabled={acknowledgeMutation.isPending}
               >
                 <CheckCircle2 className="h-4 w-4" />
                 Mark as Reviewed

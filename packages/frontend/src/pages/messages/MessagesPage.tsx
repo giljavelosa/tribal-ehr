@@ -8,13 +8,12 @@ import {
   Inbox,
   SendHorizontal,
   Mail,
-  MailOpen,
   Forward,
   Star,
   StarOff,
   Calendar,
   AlertTriangle,
-  Flag,
+  Loader2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -31,7 +30,7 @@ import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog,
   DialogContent,
@@ -49,131 +48,29 @@ import {
 } from '@/components/ui/select';
 import { usePatientContext } from '@/stores/patient-context-store';
 import { usePatientContextFromUrl } from '@/hooks/use-patient-context-url';
+import { useDebounce } from '@/hooks/use-debounce';
+import {
+  useMessagesInbox,
+  useMessagesSent,
+  useMessagesFlagged,
+  useMessagesUnreadCount,
+  useSendMessage,
+  useReplyToMessage,
+  useMarkMessageRead,
+  useFlagMessage,
+  useForwardMessage,
+  useSetMessageFollowUp,
+  useEscalateMessage,
+  type ApiMessage,
+} from '@/hooks/use-api';
 
-interface Message {
-  id: string;
-  from: string;
-  to: string;
-  subject: string;
-  body: string;
-  patient?: string;
-  patientId?: string;
-  date: string;
-  read: boolean;
-  priority: 'low' | 'normal' | 'high';
+// Unified display type that normalizes inbox/sent messages for the list view
+interface DisplayMessage extends ApiMessage {
   direction: 'incoming' | 'outgoing';
-  replies?: Message[];
-  flagged?: boolean;
-  followUpDate?: string;
-  escalated?: boolean;
 }
 
-const mockMessages: Message[] = [
-  {
-    id: '1',
-    from: 'Nurse Sarah',
-    to: 'Dr. Wilson',
-    subject: 'Patient Robert Williams - Vitals Concern',
-    body: 'Blood pressure reading of 180/110 during afternoon check. Patient reported headache and dizziness. I administered PRN antihypertensive per standing order. Please advise on further management.\n\nCurrent vitals:\nBP: 180/110 mmHg\nHR: 92 bpm\nRR: 20/min\nSpO2: 96%',
-    patient: 'Robert Williams',
-    patientId: 'P-001',
-    date: '2024-01-12T10:30:00',
-    read: false,
-    priority: 'high',
-    direction: 'incoming',
-    replies: [],
-  },
-  {
-    id: '2',
-    from: 'Dr. Anderson',
-    to: 'Dr. Wilson',
-    subject: 'Referral Follow-up: James Brown',
-    body: 'Cardiology has reviewed the referral and scheduled the patient for a stress test on Jan 25. The report from the initial consult is available in the patient chart. Please ensure the patient is on appropriate beta-blocker therapy prior to the test.',
-    patient: 'James Brown',
-    patientId: 'P-005',
-    date: '2024-01-12T09:15:00',
-    read: false,
-    priority: 'normal',
-    direction: 'incoming',
-    replies: [],
-  },
-  {
-    id: '3',
-    from: 'Lab Department',
-    to: 'Dr. Wilson',
-    subject: 'STAT Lab Results Available',
-    body: 'STAT troponin results are now available for review for patient Robert Williams. The results have been posted to the Results Inbox. Please review at your earliest convenience.',
-    patient: 'Robert Williams',
-    patientId: 'P-001',
-    date: '2024-01-12T08:00:00',
-    read: false,
-    priority: 'high',
-    direction: 'incoming',
-    replies: [],
-  },
-  {
-    id: '4',
-    from: 'Mary Johnson (Patient)',
-    to: 'Dr. Wilson',
-    subject: 'Prescription Renewal Request',
-    body: "I need to renew my Lisinopril prescription. My pharmacy is CVS on Main Street. I've been taking 10mg daily and haven't had any issues. I also wanted to ask about getting my annual labs done.",
-    patient: 'Mary Johnson',
-    patientId: 'P-002',
-    date: '2024-01-11T14:30:00',
-    read: true,
-    priority: 'normal',
-    direction: 'incoming',
-    replies: [],
-  },
-  {
-    id: '5',
-    from: 'Front Desk',
-    to: 'Dr. Wilson',
-    subject: 'Schedule Change Request',
-    body: "Patient Sarah Davis has requested to reschedule her appointment from January 18 to January 22. She mentioned she has a conflict with her work schedule. Would you like me to accommodate this request?",
-    patient: 'Sarah Davis',
-    patientId: 'P-004',
-    date: '2024-01-11T11:00:00',
-    read: true,
-    priority: 'low',
-    direction: 'incoming',
-    replies: [],
-  },
-  {
-    id: '6',
-    from: 'Dr. Wilson',
-    to: 'Nurse Sarah',
-    subject: 'Re: Patient Robert Williams - BP Management',
-    body: 'Thank you for the update. Please continue monitoring vitals q2h. If systolic remains > 160, start Labetalol 20mg IV push. I will be in to evaluate the patient within the hour.',
-    patient: 'Robert Williams',
-    patientId: 'P-001',
-    date: '2024-01-12T10:45:00',
-    read: true,
-    priority: 'high',
-    direction: 'outgoing',
-    replies: [],
-  },
-  {
-    id: '7',
-    from: 'Dr. Wilson',
-    to: 'Pharmacy',
-    subject: 'Rx Renewal: Lisinopril for Mary Johnson',
-    body: 'Please renew Lisinopril 10mg PO daily, 90-day supply, 3 refills for Mary Johnson (MRN: P-002). Patient reports tolerance without adverse effects.',
-    patient: 'Mary Johnson',
-    patientId: 'P-002',
-    date: '2024-01-11T15:00:00',
-    read: true,
-    priority: 'normal',
-    direction: 'outgoing',
-    replies: [],
-  },
-];
-
 export function MessagesPage() {
-  const [messages, setMessages] = useState<Message[]>(mockMessages);
-  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(
-    null,
-  );
+  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [replyText, setReplyText] = useState('');
   const [composeDialogOpen, setComposeDialogOpen] = useState(false);
@@ -187,122 +84,122 @@ export function MessagesPage() {
     patient: activePatient
       ? `${activePatient.lastName}, ${activePatient.firstName}`
       : '',
-    priority: 'normal' as Message['priority'],
+    priority: 'normal' as ApiMessage['priority'],
   }));
 
-  const inboxMessages = useMemo(
-    () =>
-      messages.filter((m) => m.direction === 'incoming').filter((m) => {
-        if (!searchQuery) return true;
-        const q = searchQuery.toLowerCase();
-        return (
-          m.from.toLowerCase().includes(q) ||
+  // API hooks
+  const inboxQuery = useMessagesInbox();
+  const sentQuery = useMessagesSent();
+  const flaggedQuery = useMessagesFlagged();
+  const unreadCountQuery = useMessagesUnreadCount();
+  const sendMessageMutation = useSendMessage();
+  const replyMutation = useReplyToMessage();
+  const markReadMutation = useMarkMessageRead();
+  const flagMutation = useFlagMessage();
+  const forwardMutation = useForwardMessage();
+  const followUpMutation = useSetMessageFollowUp();
+  const escalateMutation = useEscalateMessage();
+
+  // Transform API messages into display messages
+  const inboxMessages: DisplayMessage[] = useMemo(() => {
+    const data = inboxQuery.data?.data ?? [];
+    return data.map((m) => ({ ...m, direction: 'incoming' as const }));
+  }, [inboxQuery.data]);
+
+  const sentMessages: DisplayMessage[] = useMemo(() => {
+    const data = sentQuery.data?.data ?? [];
+    return data.map((m) => ({ ...m, direction: 'outgoing' as const }));
+  }, [sentQuery.data]);
+
+  const flaggedMessages: DisplayMessage[] = useMemo(() => {
+    const data = flaggedQuery.data ?? [];
+    return data.map((m) => ({ ...m, direction: 'incoming' as const }));
+  }, [flaggedQuery.data]);
+
+  const allMessages: DisplayMessage[] = useMemo(() => {
+    const combined = [...inboxMessages, ...sentMessages];
+    // Sort by date descending
+    combined.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return combined;
+  }, [inboxMessages, sentMessages]);
+
+  // Debounce search to avoid excessive filtering on large message lists
+  const debouncedSearchQuery = useDebounce(searchQuery, 200);
+
+  // Apply local search filter
+  const filterBySearch = useCallback(
+    (list: DisplayMessage[]) => {
+      if (!debouncedSearchQuery) return list;
+      const q = debouncedSearchQuery.toLowerCase();
+      return list.filter(
+        (m) =>
+          (m.senderName || '').toLowerCase().includes(q) ||
+          (m.recipientName || '').toLowerCase().includes(q) ||
           m.subject.toLowerCase().includes(q) ||
           m.body.toLowerCase().includes(q) ||
-          (m.patient && m.patient.toLowerCase().includes(q))
-        );
-      }),
-    [messages, searchQuery],
-  );
-
-  const sentMessages = useMemo(
-    () =>
-      messages.filter((m) => m.direction === 'outgoing').filter((m) => {
-        if (!searchQuery) return true;
-        const q = searchQuery.toLowerCase();
-        return (
-          m.to.toLowerCase().includes(q) ||
-          m.subject.toLowerCase().includes(q) ||
-          m.body.toLowerCase().includes(q) ||
-          (m.patient && m.patient.toLowerCase().includes(q))
-        );
-      }),
-    [messages, searchQuery],
-  );
-
-  const allMessages = useMemo(
-    () =>
-      messages.filter((m) => {
-        if (!searchQuery) return true;
-        const q = searchQuery.toLowerCase();
-        return (
-          m.from.toLowerCase().includes(q) ||
-          m.to.toLowerCase().includes(q) ||
-          m.subject.toLowerCase().includes(q) ||
-          m.body.toLowerCase().includes(q) ||
-          (m.patient && m.patient.toLowerCase().includes(q))
-        );
-      }),
-    [messages, searchQuery],
-  );
-
-  const unreadCount = useMemo(
-    () => inboxMessages.filter((m) => !m.read).length,
-    [inboxMessages],
-  );
-
-  const selectedMessage = useMemo(
-    () => messages.find((m) => m.id === selectedMessageId) || null,
-    [messages, selectedMessageId],
-  );
-
-  const selectMessage = useCallback(
-    (id: string) => {
-      setSelectedMessageId(id);
-      setReplyText('');
-      // Mark as read
-      setMessages((prev) =>
-        prev.map((m) => (m.id === id ? { ...m, read: true } : m)),
+          (m.patientName && m.patientName.toLowerCase().includes(q)),
       );
     },
-    [],
+    [debouncedSearchQuery],
+  );
+
+  const filteredInbox = useMemo(() => filterBySearch(inboxMessages), [filterBySearch, inboxMessages]);
+  const filteredSent = useMemo(() => filterBySearch(sentMessages), [filterBySearch, sentMessages]);
+  const filteredFlagged = useMemo(() => filterBySearch(flaggedMessages), [filterBySearch, flaggedMessages]);
+  const filteredAll = useMemo(() => filterBySearch(allMessages), [filterBySearch, allMessages]);
+
+  const unreadCount = unreadCountQuery.data ?? 0;
+
+  const selectedMessage = useMemo(() => {
+    if (!selectedMessageId) return null;
+    return allMessages.find((m) => m.id === selectedMessageId) ||
+      flaggedMessages.find((m) => m.id === selectedMessageId) ||
+      null;
+  }, [allMessages, flaggedMessages, selectedMessageId]);
+
+  const selectMessage = useCallback(
+    (msg: DisplayMessage) => {
+      setSelectedMessageId(msg.id);
+      setReplyText('');
+      // Mark as read if unread and incoming
+      if (!msg.readAt && msg.direction === 'incoming') {
+        markReadMutation.mutate(msg.id);
+      }
+    },
+    [markReadMutation],
   );
 
   const handleReply = useCallback(() => {
     if (!replyText.trim() || !selectedMessage) return;
-    const reply: Message = {
-      id: `reply-${Date.now()}`,
-      from: 'Dr. Wilson',
-      to: selectedMessage.from,
-      subject: `Re: ${selectedMessage.subject}`,
-      body: replyText,
-      patient: selectedMessage.patient,
-      patientId: selectedMessage.patientId,
-      date: new Date().toISOString(),
-      read: true,
-      priority: selectedMessage.priority,
-      direction: 'outgoing',
-      replies: [],
-    };
-    setMessages((prev) => [reply, ...prev]);
-    setReplyText('');
-  }, [replyText, selectedMessage]);
+    replyMutation.mutate(
+      { id: selectedMessage.id, body: replyText },
+      { onSuccess: () => setReplyText('') },
+    );
+  }, [replyText, selectedMessage, replyMutation]);
 
   const handleCompose = useCallback(() => {
     if (!composeForm.to || !composeForm.subject || !composeForm.body) return;
-    const newMessage: Message = {
-      id: `msg-${Date.now()}`,
-      from: 'Dr. Wilson',
-      to: composeForm.to,
-      subject: composeForm.subject,
-      body: composeForm.body,
-      patient: composeForm.patient || undefined,
-      date: new Date().toISOString(),
-      read: true,
-      priority: composeForm.priority,
-      direction: 'outgoing',
-      replies: [],
-    };
-    setMessages((prev) => [newMessage, ...prev]);
-    setComposeDialogOpen(false);
-    setComposeForm({
-      to: '',
-      subject: '',
-      body: '',
-      patient: '',
-      priority: 'normal',
-    });
-  }, [composeForm]);
+    sendMessageMutation.mutate(
+      {
+        recipientId: composeForm.to,
+        subject: composeForm.subject,
+        body: composeForm.body,
+        priority: composeForm.priority,
+      },
+      {
+        onSuccess: () => {
+          setComposeDialogOpen(false);
+          setComposeForm({
+            to: '',
+            subject: '',
+            body: '',
+            patient: '',
+            priority: 'normal',
+          });
+        },
+      },
+    );
+  }, [composeForm, sendMessageMutation]);
 
   const [forwardDialogOpen, setForwardDialogOpen] = useState(false);
   const [forwardTo, setForwardTo] = useState('');
@@ -310,63 +207,45 @@ export function MessagesPage() {
   const [followUpDialogOpen, setFollowUpDialogOpen] = useState(false);
   const [followUpDate, setFollowUpDate] = useState('');
 
-  const flaggedMessages = useMemo(
-    () => messages.filter((m) => m.flagged),
-    [messages],
+  const handleToggleFlag = useCallback(
+    (messageId: string, currentlyFlagged: boolean) => {
+      flagMutation.mutate({ id: messageId, flagged: !currentlyFlagged });
+    },
+    [flagMutation],
   );
-
-  const handleToggleFlag = useCallback((messageId: string) => {
-    setMessages((prev) =>
-      prev.map((m) =>
-        m.id === messageId ? { ...m, flagged: !m.flagged } : m,
-      ),
-    );
-  }, []);
 
   const handleForward = useCallback(() => {
     if (!forwardTo.trim() || !selectedMessage) return;
-    const forwarded: Message = {
-      id: `fwd-${Date.now()}`,
-      from: 'Dr. Wilson',
-      to: forwardTo,
-      subject: `Fwd: ${selectedMessage.subject}`,
-      body: forwardNote
-        ? `${forwardNote}\n\n--- Forwarded Message ---\nFrom: ${selectedMessage.from}\n\n${selectedMessage.body}`
-        : `--- Forwarded Message ---\nFrom: ${selectedMessage.from}\n\n${selectedMessage.body}`,
-      patient: selectedMessage.patient,
-      patientId: selectedMessage.patientId,
-      date: new Date().toISOString(),
-      read: true,
-      priority: selectedMessage.priority,
-      direction: 'outgoing',
-    };
-    setMessages((prev) => [forwarded, ...prev]);
-    setForwardDialogOpen(false);
-    setForwardTo('');
-    setForwardNote('');
-  }, [forwardTo, forwardNote, selectedMessage]);
+    forwardMutation.mutate(
+      { id: selectedMessage.id, recipientId: forwardTo, note: forwardNote || undefined },
+      {
+        onSuccess: () => {
+          setForwardDialogOpen(false);
+          setForwardTo('');
+          setForwardNote('');
+        },
+      },
+    );
+  }, [forwardTo, forwardNote, selectedMessage, forwardMutation]);
 
   const handleSetFollowUp = useCallback(() => {
     if (!followUpDate || !selectedMessage) return;
-    setMessages((prev) =>
-      prev.map((m) =>
-        m.id === selectedMessage.id ? { ...m, followUpDate } : m,
-      ),
+    followUpMutation.mutate(
+      { id: selectedMessage.id, followUpDate },
+      {
+        onSuccess: () => {
+          setFollowUpDialogOpen(false);
+          setFollowUpDate('');
+        },
+      },
     );
-    setFollowUpDialogOpen(false);
-    setFollowUpDate('');
-  }, [followUpDate, selectedMessage]);
+  }, [followUpDate, selectedMessage, followUpMutation]);
 
   const handleEscalate = useCallback(() => {
     if (!selectedMessage) return;
-    setMessages((prev) =>
-      prev.map((m) =>
-        m.id === selectedMessage.id
-          ? { ...m, escalated: true, priority: 'high' }
-          : m,
-      ),
-    );
-  }, [selectedMessage]);
+    // Escalate to the sender (or a supervisor). For now, we pass senderId as the escalation target.
+    escalateMutation.mutate({ id: selectedMessage.id, escalateTo: selectedMessage.senderId });
+  }, [selectedMessage, escalateMutation]);
 
   const getInitials = (name: string) =>
     name
@@ -376,9 +255,16 @@ export function MessagesPage() {
       .slice(0, 2)
       .toUpperCase();
 
-  const renderMessageList = (list: Message[]) => (
+  const isLoading = inboxQuery.isLoading || sentQuery.isLoading;
+
+  const renderMessageList = (list: DisplayMessage[], loading: boolean) => (
     <ScrollArea className="h-[600px]">
-      {list.length === 0 ? (
+      {loading ? (
+        <div className="flex h-[200px] items-center justify-center text-muted-foreground" role="status" aria-label="Loading messages">
+          <Loader2 className="mr-2 h-5 w-5 animate-spin" aria-hidden="true" />
+          Loading messages...
+        </div>
+      ) : list.length === 0 ? (
         <div className="flex h-[200px] items-center justify-center text-muted-foreground">
           No messages found.
         </div>
@@ -388,8 +274,18 @@ export function MessagesPage() {
             key={message.id}
             className={`cursor-pointer border-b px-4 py-3 transition-colors hover:bg-accent ${
               selectedMessageId === message.id ? 'bg-accent' : ''
-            } ${!message.read ? 'bg-primary/5' : ''}`}
-            onClick={() => selectMessage(message.id)}
+            } ${!message.readAt ? 'bg-primary/5' : ''}`}
+            onClick={() => selectMessage(message)}
+            role="button"
+            tabIndex={0}
+            aria-label={`${!message.readAt ? 'Unread: ' : ''}${message.subject} from ${message.senderName || 'Unknown'}`}
+            aria-selected={selectedMessageId === message.id}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                selectMessage(message);
+              }
+            }}
           >
             <div className="flex items-start justify-between gap-2">
               <div className="flex items-start gap-2">
@@ -397,49 +293,49 @@ export function MessagesPage() {
                   <AvatarFallback className="text-xs">
                     {getInitials(
                       message.direction === 'incoming'
-                        ? message.from
-                        : message.to,
+                        ? message.senderName || 'Unknown'
+                        : message.recipientName || 'Unknown',
                     )}
                   </AvatarFallback>
                 </Avatar>
                 <div className="min-w-0">
                   <p
-                    className={`text-sm ${!message.read ? 'font-semibold' : 'font-medium'}`}
+                    className={`text-sm ${!message.readAt ? 'font-semibold' : 'font-medium'}`}
                   >
                     {message.direction === 'incoming'
-                      ? message.from
-                      : `To: ${message.to}`}
+                      ? message.senderName || 'Unknown'
+                      : `To: ${message.recipientName || 'Unknown'}`}
                   </p>
                   <p className="truncate text-sm">{message.subject}</p>
                   <p className="truncate text-xs text-muted-foreground">
                     {message.body.slice(0, 80)}...
                   </p>
-                  {message.patient && (
+                  {message.patientName && (
                     <Badge
                       variant="outline"
                       className="mt-1 text-[10px]"
                     >
-                      {message.patient}
+                      {message.patientName}
                     </Badge>
                   )}
                 </div>
               </div>
               <div className="flex flex-col items-end gap-1">
                 <span className="whitespace-nowrap text-xs text-muted-foreground">
-                  {new Date(message.date).toLocaleDateString('en-US', {
+                  {new Date(message.createdAt).toLocaleDateString('en-US', {
                     month: 'short',
                     day: 'numeric',
                   })}
                 </span>
                 {message.flagged && (
-                  <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
+                  <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" aria-hidden="true" />
                 )}
                 {message.escalated && (
                   <Badge variant="destructive" className="text-[10px]">
                     Escalated
                   </Badge>
                 )}
-                {message.priority === 'high' && !message.escalated && (
+                {(message.priority === 'high' || message.priority === 'urgent') && !message.escalated && (
                   <Badge variant="destructive" className="text-[10px]">
                     Urgent
                   </Badge>
@@ -450,8 +346,8 @@ export function MessagesPage() {
                     {new Date(message.followUpDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                   </Badge>
                 )}
-                {!message.read && (
-                  <div className="h-2 w-2 rounded-full bg-primary" />
+                {!message.readAt && (
+                  <div className="h-2 w-2 rounded-full bg-primary" aria-hidden="true" />
                 )}
               </div>
             </div>
@@ -483,12 +379,13 @@ export function MessagesPage() {
           <CardHeader className="pb-3">
             <div className="space-y-3">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
                 <Input
                   placeholder="Search messages..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="pl-9"
+                  aria-label="Search messages by name, subject, or content"
                 />
               </div>
               <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -522,10 +419,10 @@ export function MessagesPage() {
             </div>
           </CardHeader>
           <CardContent className="p-0">
-            {activeTab === 'inbox' && renderMessageList(inboxMessages)}
-            {activeTab === 'sent' && renderMessageList(sentMessages)}
-            {activeTab === 'flagged' && renderMessageList(flaggedMessages)}
-            {activeTab === 'all' && renderMessageList(allMessages)}
+            {activeTab === 'inbox' && renderMessageList(filteredInbox, inboxQuery.isLoading)}
+            {activeTab === 'sent' && renderMessageList(filteredSent, sentQuery.isLoading)}
+            {activeTab === 'flagged' && renderMessageList(filteredFlagged, flaggedQuery.isLoading)}
+            {activeTab === 'all' && renderMessageList(filteredAll, isLoading)}
           </CardContent>
         </Card>
 
@@ -539,11 +436,11 @@ export function MessagesPage() {
                     <CardTitle>{selectedMessage.subject}</CardTitle>
                     <CardDescription className="mt-1 space-y-1">
                       <div>
-                        From: {selectedMessage.from} | To:{' '}
-                        {selectedMessage.to}
+                        From: {selectedMessage.senderName || 'Unknown'} | To:{' '}
+                        {selectedMessage.recipientName || 'Unknown'}
                       </div>
                       <div>
-                        {new Date(selectedMessage.date).toLocaleString(
+                        {new Date(selectedMessage.createdAt).toLocaleString(
                           'en-US',
                           {
                             weekday: 'short',
@@ -555,11 +452,11 @@ export function MessagesPage() {
                           },
                         )}
                       </div>
-                      {selectedMessage.patient && (
+                      {selectedMessage.patientName && (
                         <div>
                           Patient:{' '}
                           <Badge variant="outline" className="text-xs">
-                            {selectedMessage.patient}
+                            {selectedMessage.patientName}
                           </Badge>
                         </div>
                       )}
@@ -570,7 +467,7 @@ export function MessagesPage() {
                       variant="ghost"
                       size="sm"
                       className="gap-1"
-                      onClick={() => handleToggleFlag(selectedMessage.id)}
+                      onClick={() => handleToggleFlag(selectedMessage.id, !!selectedMessage.flagged)}
                       title={selectedMessage.flagged ? 'Remove flag' : 'Flag message'}
                     >
                       {selectedMessage.flagged ? (
@@ -608,7 +505,7 @@ export function MessagesPage() {
                         <AlertTriangle className="h-4 w-4" />
                       </Button>
                     )}
-                    {selectedMessage.priority === 'high' && (
+                    {(selectedMessage.priority === 'high' || selectedMessage.priority === 'urgent') && (
                       <Badge variant="destructive">Urgent</Badge>
                     )}
                     {selectedMessage.escalated && (
@@ -646,6 +543,7 @@ export function MessagesPage() {
                     rows={4}
                     value={replyText}
                     onChange={(e) => setReplyText(e.target.value)}
+                    aria-label="Reply message text"
                   />
                   <div className="flex items-center justify-between">
                     <Button variant="outline" size="sm">
@@ -656,9 +554,13 @@ export function MessagesPage() {
                       size="sm"
                       className="gap-1"
                       onClick={handleReply}
-                      disabled={!replyText.trim()}
+                      disabled={!replyText.trim() || replyMutation.isPending}
                     >
-                      <Send className="h-4 w-4" />
+                      {replyMutation.isPending ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Send className="h-4 w-4" />
+                      )}
                       Send Reply
                     </Button>
                   </div>
@@ -693,10 +595,10 @@ export function MessagesPage() {
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="forwardTo">Forward to</Label>
+              <Label htmlFor="forwardTo">Forward to (User ID)</Label>
               <Input
                 id="forwardTo"
-                placeholder="Recipient name or role..."
+                placeholder="Recipient user ID..."
                 value={forwardTo}
                 onChange={(e) => setForwardTo(e.target.value)}
               />
@@ -716,8 +618,16 @@ export function MessagesPage() {
             <Button variant="outline" onClick={() => setForwardDialogOpen(false)}>
               Cancel
             </Button>
-            <Button className="gap-1" onClick={handleForward} disabled={!forwardTo.trim()}>
-              <Forward className="h-4 w-4" />
+            <Button
+              className="gap-1"
+              onClick={handleForward}
+              disabled={!forwardTo.trim() || forwardMutation.isPending}
+            >
+              {forwardMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Forward className="h-4 w-4" />
+              )}
               Forward
             </Button>
           </DialogFooter>
@@ -750,8 +660,11 @@ export function MessagesPage() {
             <Button variant="outline" onClick={() => setFollowUpDialogOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleSetFollowUp} disabled={!followUpDate}>
-              Set Follow-up
+            <Button
+              onClick={handleSetFollowUp}
+              disabled={!followUpDate || followUpMutation.isPending}
+            >
+              {followUpMutation.isPending ? 'Saving...' : 'Set Follow-up'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -768,10 +681,10 @@ export function MessagesPage() {
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="composeTo">To</Label>
+              <Label htmlFor="composeTo">To (User ID)</Label>
               <Input
                 id="composeTo"
-                placeholder="Recipient name or role..."
+                placeholder="Recipient user ID..."
                 value={composeForm.to}
                 onChange={(e) =>
                   setComposeForm((prev) => ({
@@ -806,7 +719,7 @@ export function MessagesPage() {
                   onValueChange={(v) =>
                     setComposeForm((prev) => ({
                       ...prev,
-                      priority: v as Message['priority'],
+                      priority: v as ApiMessage['priority'],
                     }))
                   }
                 >
@@ -814,9 +727,9 @@ export function MessagesPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="low">Low</SelectItem>
                     <SelectItem value="normal">Normal</SelectItem>
-                    <SelectItem value="high">High / Urgent</SelectItem>
+                    <SelectItem value="high">High</SelectItem>
+                    <SelectItem value="urgent">Urgent</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -866,10 +779,15 @@ export function MessagesPage() {
               disabled={
                 !composeForm.to ||
                 !composeForm.subject ||
-                !composeForm.body
+                !composeForm.body ||
+                sendMessageMutation.isPending
               }
             >
-              <Send className="h-4 w-4" />
+              {sendMessageMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Send className="h-4 w-4" />
+              )}
               Send Message
             </Button>
           </DialogFooter>

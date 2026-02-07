@@ -14,10 +14,10 @@ export async function up(knex: Knex): Promise<void> {
     table.varchar('suffix', 20);
     table.date('date_of_birth').notNullable();
     table.varchar('sex', 20).notNullable();
-    table.varchar('gender_identity', 50);
-    table.varchar('sexual_orientation', 50);
+    table.jsonb('gender_identity');
+    table.jsonb('sexual_orientation');
     table.jsonb('race').defaultTo('[]');
-    table.varchar('ethnicity', 50);
+    table.jsonb('ethnicity');
     table.varchar('preferred_language', 50).defaultTo('en');
     table.varchar('marital_status', 30);
     table.text('ssn_encrypted');

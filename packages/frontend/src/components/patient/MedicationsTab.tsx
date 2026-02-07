@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react';
-import { Plus, RefreshCw, ExternalLink } from 'lucide-react';
+import { Plus, RefreshCw, Check, X, PenLine } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -38,6 +38,7 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   useMedications,
   useCreateMedication,
+  useUpdateMedication,
   type MedicationRequest,
 } from '@/hooks/use-api';
 import { useCdsInvoke, useCdsFeedback } from '@/hooks/use-cds';
@@ -61,6 +62,7 @@ const statusColors: Record<string, string> = {
 export function MedicationsTab({ patientId }: MedicationsTabProps) {
   const { data: medications, isLoading, error } = useMedications(patientId);
   const createMedication = useCreateMedication();
+  const updateMedication = useUpdateMedication();
 
   const cdsInvoke = useCdsInvoke();
   const cdsFeedback = useCdsFeedback();
@@ -79,6 +81,19 @@ export function MedicationsTab({ patientId }: MedicationsTabProps) {
     frequency: '',
     note: '',
   });
+
+  // Reconciliation state
+  const [reconStatuses, setReconStatuses] = useState<Record<string, 'continued' | 'discontinued' | 'modified' | null>>({});
+  const [modifyDialogOpen, setModifyDialogOpen] = useState(false);
+  const [modifyingMed, setModifyingMed] = useState<MedicationRequest | null>(null);
+  const [modifyFormData, setModifyFormData] = useState({
+    dose: '',
+    frequency: '',
+    route: '',
+  });
+  const [discontinueDialogOpen, setDiscontinueDialogOpen] = useState(false);
+  const [discontinuingMed, setDiscontinuingMed] = useState<MedicationRequest | null>(null);
+  const [stopReason, setStopReason] = useState('');
 
   const filteredMeds = useMemo(() => {
     if (!medications) return [];
@@ -169,6 +184,84 @@ export function MedicationsTab({ patientId }: MedicationsTabProps) {
     },
     [cdsFeedback],
   );
+
+  // Reconciliation handlers
+  const handleContinue = useCallback(
+    async (med: MedicationRequest) => {
+      await updateMedication.mutateAsync({
+        patientId,
+        medicationId: med.id,
+        data: { status: 'active' },
+      });
+      setReconStatuses((prev) => ({ ...prev, [med.id]: 'continued' }));
+    },
+    [patientId, updateMedication],
+  );
+
+  const handleOpenModify = useCallback(
+    (med: MedicationRequest) => {
+      setModifyingMed(med);
+      setModifyFormData({
+        dose: med.dose,
+        frequency: med.frequency,
+        route: med.route,
+      });
+      setModifyDialogOpen(true);
+    },
+    [],
+  );
+
+  const handleSubmitModify = useCallback(
+    async () => {
+      if (!modifyingMed) return;
+      await updateMedication.mutateAsync({
+        patientId,
+        medicationId: modifyingMed.id,
+        data: {
+          dose: modifyFormData.dose,
+          frequency: modifyFormData.frequency,
+          route: modifyFormData.route,
+          status: 'active',
+        },
+      });
+      setReconStatuses((prev) => ({ ...prev, [modifyingMed.id]: 'modified' }));
+      setModifyDialogOpen(false);
+      setModifyingMed(null);
+    },
+    [modifyingMed, modifyFormData, patientId, updateMedication],
+  );
+
+  const handleOpenDiscontinue = useCallback(
+    (med: MedicationRequest) => {
+      setDiscontinuingMed(med);
+      setStopReason('');
+      setDiscontinueDialogOpen(true);
+    },
+    [],
+  );
+
+  const handleSubmitDiscontinue = useCallback(
+    async () => {
+      if (!discontinuingMed) return;
+      await updateMedication.mutateAsync({
+        patientId,
+        medicationId: discontinuingMed.id,
+        data: {
+          status: 'stopped',
+          note: stopReason || 'Discontinued during medication reconciliation',
+        },
+      });
+      setReconStatuses((prev) => ({ ...prev, [discontinuingMed.id]: 'discontinued' }));
+      setDiscontinueDialogOpen(false);
+      setDiscontinuingMed(null);
+    },
+    [discontinuingMed, stopReason, patientId, updateMedication],
+  );
+
+  const handleCloseRecon = useCallback(() => {
+    setReconDialogOpen(false);
+    setReconStatuses({});
+  }, []);
 
   if (error) {
     return (
@@ -437,42 +530,84 @@ export function MedicationsTab({ patientId }: MedicationsTabProps) {
       />
 
       {/* Reconciliation Dialog */}
-      <Dialog open={reconDialogOpen} onOpenChange={setReconDialogOpen}>
+      <Dialog open={reconDialogOpen} onOpenChange={handleCloseRecon}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Medication Reconciliation</DialogTitle>
             <DialogDescription>
-              Review and verify the patient's current medication list. Confirm
+              Review and verify the patient&apos;s current medication list. Confirm
               each medication is accurate with the patient or caregiver.
             </DialogDescription>
           </DialogHeader>
           <div className="max-h-[400px] overflow-y-auto">
             {(medications || [])
               .filter((m) => m.status === 'active')
-              .map((med) => (
-                <div
-                  key={med.id}
-                  className="flex items-center justify-between border-b p-3 last:border-0"
-                >
-                  <div>
-                    <p className="font-medium">{med.medication}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {med.dose} {med.route} - {med.frequency}
-                    </p>
+              .map((med) => {
+                const reconStatus = reconStatuses[med.id];
+                return (
+                  <div
+                    key={med.id}
+                    className={`flex items-center justify-between border-b p-3 last:border-0 ${
+                      reconStatus ? 'opacity-60' : ''
+                    }`}
+                  >
+                    <div>
+                      <p className="font-medium">{med.medication}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {med.dose} {med.route} - {med.frequency}
+                      </p>
+                      {reconStatus && (
+                        <Badge
+                          variant="outline"
+                          className={
+                            reconStatus === 'continued'
+                              ? 'mt-1 bg-green-100 text-green-800'
+                              : reconStatus === 'modified'
+                                ? 'mt-1 bg-blue-100 text-blue-800'
+                                : 'mt-1 bg-red-100 text-red-800'
+                          }
+                        >
+                          {reconStatus === 'continued' && 'Continued'}
+                          {reconStatus === 'modified' && 'Modified'}
+                          {reconStatus === 'discontinued' && 'Discontinued'}
+                        </Badge>
+                      )}
+                    </div>
+                    {!reconStatus && (
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-1"
+                          onClick={() => handleContinue(med)}
+                          disabled={updateMedication.isPending}
+                        >
+                          <Check className="h-3 w-3" />
+                          Continue
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-1"
+                          onClick={() => handleOpenModify(med)}
+                        >
+                          <PenLine className="h-3 w-3" />
+                          Modify
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          className="gap-1"
+                          onClick={() => handleOpenDiscontinue(med)}
+                        >
+                          <X className="h-3 w-3" />
+                          Discontinue
+                        </Button>
+                      </div>
+                    )}
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Button variant="outline" size="sm">
-                      Continue
-                    </Button>
-                    <Button variant="outline" size="sm">
-                      Modify
-                    </Button>
-                    <Button variant="destructive" size="sm">
-                      Discontinue
-                    </Button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             {(medications || []).filter((m) => m.status === 'active').length ===
               0 && (
               <p className="py-8 text-center text-muted-foreground">
@@ -481,11 +616,126 @@ export function MedicationsTab({ patientId }: MedicationsTabProps) {
             )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setReconDialogOpen(false)}>
+            <Button variant="outline" onClick={handleCloseRecon}>
               Cancel
             </Button>
-            <Button onClick={() => setReconDialogOpen(false)}>
+            <Button onClick={handleCloseRecon}>
               Complete Reconciliation
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modify Medication Dialog */}
+      <Dialog open={modifyDialogOpen} onOpenChange={setModifyDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Modify Medication</DialogTitle>
+            <DialogDescription>
+              Update the dose, frequency, or route for{' '}
+              {modifyingMed?.medication}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="modifyDose">Dose</Label>
+              <Input
+                id="modifyDose"
+                value={modifyFormData.dose}
+                onChange={(e) =>
+                  setModifyFormData((prev) => ({ ...prev, dose: e.target.value }))
+                }
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="modifyFrequency">Frequency</Label>
+              <Input
+                id="modifyFrequency"
+                value={modifyFormData.frequency}
+                onChange={(e) =>
+                  setModifyFormData((prev) => ({ ...prev, frequency: e.target.value }))
+                }
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Route</Label>
+              <Select
+                value={modifyFormData.route}
+                onValueChange={(v) =>
+                  setModifyFormData((prev) => ({ ...prev, route: v }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="oral">Oral</SelectItem>
+                  <SelectItem value="sublingual">Sublingual</SelectItem>
+                  <SelectItem value="topical">Topical</SelectItem>
+                  <SelectItem value="intravenous">Intravenous</SelectItem>
+                  <SelectItem value="intramuscular">Intramuscular</SelectItem>
+                  <SelectItem value="subcutaneous">Subcutaneous</SelectItem>
+                  <SelectItem value="inhalation">Inhalation</SelectItem>
+                  <SelectItem value="rectal">Rectal</SelectItem>
+                  <SelectItem value="ophthalmic">Ophthalmic</SelectItem>
+                  <SelectItem value="otic">Otic</SelectItem>
+                  <SelectItem value="nasal">Nasal</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setModifyDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSubmitModify}
+              disabled={
+                !modifyFormData.dose ||
+                !modifyFormData.frequency ||
+                updateMedication.isPending
+              }
+            >
+              {updateMedication.isPending ? 'Saving...' : 'Save Changes'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Discontinue Medication Dialog */}
+      <Dialog open={discontinueDialogOpen} onOpenChange={setDiscontinueDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Discontinue Medication</DialogTitle>
+            <DialogDescription>
+              Confirm discontinuation of {discontinuingMed?.medication}. Please
+              provide a reason.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="stopReason">Reason for Discontinuation</Label>
+              <Textarea
+                id="stopReason"
+                placeholder="e.g., Patient no longer needs this medication, adverse reaction..."
+                value={stopReason}
+                onChange={(e) => setStopReason(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDiscontinueDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleSubmitDiscontinue}
+              disabled={updateMedication.isPending}
+            >
+              {updateMedication.isPending ? 'Discontinuing...' : 'Discontinue'}
             </Button>
           </DialogFooter>
         </DialogContent>

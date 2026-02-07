@@ -107,6 +107,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
         <div
           className="fixed inset-0 z-40 bg-black/50 lg:hidden"
           onClick={onClose}
+          aria-hidden="true"
         />
       )}
 
@@ -132,6 +133,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
             size="icon"
             className="lg:hidden"
             onClick={onClose}
+            aria-label="Close navigation menu"
           >
             <X className="h-5 w-5" />
           </Button>
@@ -169,7 +171,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
 
         {/* Navigation */}
         <ScrollArea className="flex-1 px-3 py-4">
-          <nav className="flex flex-col gap-1">
+          <nav className="flex flex-col gap-1" aria-label="Main navigation">
             {contextualNavItems.map((item) => (
               <NavLink
                 key={item.label}
@@ -184,7 +186,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
                   )
                 }
               >
-                <item.icon className="h-5 w-5" />
+                <item.icon className="h-5 w-5" aria-hidden="true" />
                 {item.label}
               </NavLink>
             ))}
@@ -209,7 +211,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
                       )
                     }
                   >
-                    <item.icon className="h-5 w-5" />
+                    <item.icon className="h-5 w-5" aria-hidden="true" />
                     {item.label}
                   </NavLink>
                 ))}

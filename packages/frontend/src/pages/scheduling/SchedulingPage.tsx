@@ -10,12 +10,14 @@ import {
   User,
   MapPin,
   Search,
+  Repeat,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Card,
   CardContent,
@@ -123,6 +125,8 @@ function getWeekDays(date: Date): Date[] {
   return Array.from({ length: 7 }, (_, i) => addDays(monday, i));
 }
 
+type RecurrencePattern = 'weekly' | 'biweekly' | 'monthly' | 'quarterly';
+
 const emptyAppointmentForm = {
   patientName: '',
   patientId: '',
@@ -133,6 +137,10 @@ const emptyAppointmentForm = {
   reason: '',
   location: 'Main Clinic',
   note: '',
+  recurring: false,
+  recurrencePattern: 'weekly' as RecurrencePattern,
+  recurrenceEndDate: '',
+  recurrenceOccurrences: 4,
 };
 
 export function SchedulingPage() {
@@ -201,7 +209,7 @@ export function SchedulingPage() {
       startDateTime.getTime() + formData.duration * 60000,
     );
 
-    await createAppointment.mutateAsync({
+    const appointmentData: Record<string, unknown> = {
       patientId: formData.patientId || 'pending',
       patientName: formData.patientName,
       providerId: 'current-provider',
@@ -213,7 +221,18 @@ export function SchedulingPage() {
       reason: formData.reason || undefined,
       location: formData.location || undefined,
       note: formData.note || undefined,
-    });
+    };
+
+    // Include recurrence options if enabled
+    if (formData.recurring) {
+      appointmentData.recurrence = {
+        pattern: formData.recurrencePattern,
+        endDate: formData.recurrenceEndDate || undefined,
+        occurrences: formData.recurrenceOccurrences || undefined,
+      };
+    }
+
+    await createAppointment.mutateAsync(appointmentData as Partial<Appointment>);
 
     setNewDialogOpen(false);
     setFormData(emptyAppointmentForm);
@@ -263,8 +282,9 @@ export function SchedulingPage() {
                 variant="outline"
                 size="icon"
                 onClick={() => navigateDate(-1)}
+                aria-label={view === 'day' ? 'Previous day' : 'Previous week'}
               >
-                <ChevronLeft className="h-4 w-4" />
+                <ChevronLeft className="h-4 w-4" aria-hidden="true" />
               </Button>
               <CardTitle className="flex items-center gap-2">
                 <Calendar className="h-5 w-5" />
@@ -276,8 +296,9 @@ export function SchedulingPage() {
                 variant="outline"
                 size="icon"
                 onClick={() => navigateDate(1)}
+                aria-label={view === 'day' ? 'Next day' : 'Next week'}
               >
-                <ChevronRight className="h-4 w-4" />
+                <ChevronRight className="h-4 w-4" aria-hidden="true" />
               </Button>
               <Button
                 variant="ghost"
@@ -318,7 +339,7 @@ export function SchedulingPage() {
           {view === 'day' ? (
             /* Day View */
             isLoading ? (
-              <div className="space-y-3">
+              <div className="space-y-3" role="status" aria-label="Loading schedule">
                 {Array.from({ length: 8 }).map((_, i) => (
                   <div
                     key={i}
@@ -344,6 +365,7 @@ export function SchedulingPage() {
                     onClick={() => handleViewDetail(appt)}
                     role="button"
                     tabIndex={0}
+                    aria-label={`${formatTime(appt.start)} appointment: ${appt.patientName || 'Unknown Patient'}, ${appt.type}, ${statusLabels[appt.status] || appt.status}`}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
@@ -377,7 +399,7 @@ export function SchedulingPage() {
                     <div className="flex items-center gap-2">
                       {appt.location && (
                         <span className="hidden text-xs text-muted-foreground md:flex md:items-center md:gap-1">
-                          <MapPin className="h-3 w-3" />
+                          <MapPin className="h-3 w-3" aria-hidden="true" />
                           {appt.location}
                         </span>
                       )}
@@ -395,13 +417,13 @@ export function SchedulingPage() {
           ) : (
             /* Week View */
             <div className="overflow-x-auto">
-              <div className="grid min-w-[700px] grid-cols-7 gap-2">
+              <div className="grid min-w-[700px] grid-cols-7 gap-2" role="grid" aria-label="Weekly schedule">
                 {weekDays.map((day) => {
                   const dayStr = day.toISOString().slice(0, 10);
                   const isToday =
                     dayStr === new Date().toISOString().slice(0, 10);
                   return (
-                    <div key={dayStr} className="min-w-[100px]">
+                    <div key={dayStr} className="min-w-[100px]" aria-current={isToday ? 'date' : undefined}>
                       <div
                         className={`mb-2 rounded-lg p-2 text-center text-sm ${
                           isToday
@@ -646,6 +668,90 @@ export function SchedulingPage() {
                   setFormData((prev) => ({ ...prev, note: e.target.value }))
                 }
               />
+            </div>
+
+            {/* Recurring Appointment */}
+            <div className="space-y-3 rounded-lg border p-4">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="recurring"
+                  checked={formData.recurring}
+                  onCheckedChange={(checked) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      recurring: checked === true,
+                    }))
+                  }
+                />
+                <Label htmlFor="recurring" className="flex items-center gap-1.5 cursor-pointer">
+                  <Repeat className="h-4 w-4" />
+                  Recurring Appointment
+                </Label>
+              </div>
+
+              {formData.recurring && (
+                <div className="grid gap-3 pt-1 sm:grid-cols-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Pattern</Label>
+                    <Select
+                      value={formData.recurrencePattern}
+                      onValueChange={(v) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          recurrencePattern: v as RecurrencePattern,
+                        }))
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="weekly">Weekly</SelectItem>
+                        <SelectItem value="biweekly">Every 2 Weeks</SelectItem>
+                        <SelectItem value="monthly">Monthly</SelectItem>
+                        <SelectItem value="quarterly">Quarterly</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="recurrenceEnd" className="text-xs">
+                      End Date (optional)
+                    </Label>
+                    <Input
+                      id="recurrenceEnd"
+                      type="date"
+                      value={formData.recurrenceEndDate}
+                      onChange={(e) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          recurrenceEndDate: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="recurrenceCount" className="text-xs">
+                      Occurrences
+                    </Label>
+                    <Input
+                      id="recurrenceCount"
+                      type="number"
+                      min={1}
+                      max={52}
+                      value={formData.recurrenceOccurrences}
+                      onChange={(e) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          recurrenceOccurrences: Math.min(
+                            52,
+                            Math.max(1, Number(e.target.value) || 1),
+                          ),
+                        }))
+                      }
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           </div>
           <DialogFooter>

@@ -42,6 +42,10 @@ import {
   UpdatePatientDTO,
   PatientSearchParams,
 } from '../validators/patient.validator';
+import {
+  GENDER_IDENTITY_CODES,
+  SEXUAL_ORIENTATION_CODES,
+} from '../data/demographics-codes';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -53,6 +57,7 @@ const RACE_EXTENSION_URL = 'http://hl7.org/fhir/us/core/StructureDefinition/us-c
 const ETHNICITY_EXTENSION_URL = 'http://hl7.org/fhir/us/core/StructureDefinition/us-core-ethnicity';
 const BIRTHSEX_EXTENSION_URL = 'http://hl7.org/fhir/us/core/StructureDefinition/us-core-birthsex';
 const GENDER_IDENTITY_EXTENSION_URL = 'http://hl7.org/fhir/us/core/StructureDefinition/us-core-genderIdentity';
+const SEXUAL_ORIENTATION_EXTENSION_URL = 'http://hl7.org/fhir/StructureDefinition/patient-sexualOrientation';
 
 // ---------------------------------------------------------------------------
 // Service
@@ -710,17 +715,59 @@ export class PatientService extends BaseService {
     if (patient.genderIdentity) {
       const giCoding = patient.genderIdentity.coding?.[0];
       if (giCoding) {
+        // Resolve to known SNOMED/HL7 code if possible
+        const knownGI = giCoding.code
+          ? GENDER_IDENTITY_CODES.find((c) => c.code === giCoding.code)
+          : undefined;
         extensions.push({
           url: GENDER_IDENTITY_EXTENSION_URL,
           valueCodeableConcept: {
             coding: [
               {
-                system: giCoding.system || 'http://terminology.hl7.org/CodeSystem/v3-NullFlavor',
-                code: giCoding.code,
-                display: giCoding.display,
+                system: knownGI?.system || giCoding.system || 'http://terminology.hl7.org/CodeSystem/v3-NullFlavor',
+                code: knownGI?.code || giCoding.code,
+                display: knownGI?.display || giCoding.display,
               },
             ],
-            text: patient.genderIdentity.text || giCoding.display,
+            text: patient.genderIdentity.text || knownGI?.display || giCoding.display,
+          },
+        });
+      } else if (patient.genderIdentity.text) {
+        // No coded value; use text only
+        extensions.push({
+          url: GENDER_IDENTITY_EXTENSION_URL,
+          valueCodeableConcept: {
+            text: patient.genderIdentity.text,
+          },
+        });
+      }
+    }
+
+    // Sexual orientation extension
+    if (patient.sexualOrientation) {
+      const soCoding = patient.sexualOrientation.coding?.[0];
+      if (soCoding) {
+        const knownSO = soCoding.code
+          ? SEXUAL_ORIENTATION_CODES.find((c) => c.code === soCoding.code)
+          : undefined;
+        extensions.push({
+          url: SEXUAL_ORIENTATION_EXTENSION_URL,
+          valueCodeableConcept: {
+            coding: [
+              {
+                system: knownSO?.system || soCoding.system || 'http://terminology.hl7.org/CodeSystem/v3-NullFlavor',
+                code: knownSO?.code || soCoding.code,
+                display: knownSO?.display || soCoding.display,
+              },
+            ],
+            text: patient.sexualOrientation.text || knownSO?.display || soCoding.display,
+          },
+        });
+      } else if (patient.sexualOrientation.text) {
+        extensions.push({
+          url: SEXUAL_ORIENTATION_EXTENSION_URL,
+          valueCodeableConcept: {
+            text: patient.sexualOrientation.text,
           },
         });
       }
@@ -797,6 +844,7 @@ export class PatientService extends BaseService {
     let race: RaceCode[] | undefined;
     let ethnicity: CodeableConcept | undefined;
     let genderIdentity: CodeableConcept | undefined;
+    let sexualOrientation: CodeableConcept | undefined;
 
     const extensions = fhirPatient.extension as Array<Record<string, unknown>> | undefined;
     if (extensions) {
@@ -841,6 +889,10 @@ export class PatientService extends BaseService {
         if (ext.url === GENDER_IDENTITY_EXTENSION_URL) {
           genderIdentity = ext.valueCodeableConcept as CodeableConcept | undefined;
         }
+
+        if (ext.url === SEXUAL_ORIENTATION_EXTENSION_URL) {
+          sexualOrientation = ext.valueCodeableConcept as CodeableConcept | undefined;
+        }
       }
     }
 
@@ -866,6 +918,7 @@ export class PatientService extends BaseService {
       dateOfBirth: (fhirPatient.birthDate as string) || '',
       sex: (fhirPatient.gender as AdministrativeSex) || AdministrativeSex.UNKNOWN,
       genderIdentity,
+      sexualOrientation,
       race,
       ethnicity,
       preferredLanguage,

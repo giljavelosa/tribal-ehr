@@ -7,6 +7,10 @@ import {
   FileImage,
   Stethoscope,
   ClipboardList,
+  Calendar,
+  User,
+  Clock,
+  ArrowRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -43,6 +47,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Separator } from '@/components/ui/separator';
 import {
   useOrders,
   useCreateOrder,
@@ -86,6 +91,14 @@ const statusColors: Record<string, string> = {
     'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400',
   'entered-in-error':
     'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400',
+};
+
+const referralStatusLabels: Record<string, string> = {
+  draft: 'Pending Review',
+  active: 'Pending Scheduling',
+  'on-hold': 'Scheduled',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
 };
 
 const typeLabels: Record<string, string> = {
@@ -156,6 +169,18 @@ export function OrdersTab({ patientId }: OrdersTabProps) {
     setDialogOpen(false);
     setFormData(emptyFormState);
   }, [formData, patientId, createOrder]);
+
+  // Compute referral-specific status step
+  const getReferralStep = (status: string): number => {
+    switch (status) {
+      case 'draft': return 0;
+      case 'active': return 1;
+      case 'on-hold': return 2;
+      case 'completed': return 3;
+      case 'cancelled': return -1;
+      default: return 0;
+    }
+  };
 
   if (error) {
     return (
@@ -295,7 +320,9 @@ export function OrdersTab({ patientId }: OrdersTabProps) {
                           variant="outline"
                           className={statusColors[order.status] || ''}
                         >
-                          {order.status}
+                          {order.type === 'referral'
+                            ? referralStatusLabels[order.status] || order.status
+                            : order.status}
                         </Badge>
                       </TableCell>
                       <TableCell>{order.orderingProvider}</TableCell>
@@ -429,7 +456,11 @@ export function OrdersTab({ patientId }: OrdersTabProps) {
       <Dialog open={detailDialogOpen} onOpenChange={setDetailDialogOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Order Detail</DialogTitle>
+            <DialogTitle>
+              {selectedOrder?.type === 'referral'
+                ? 'Referral Status'
+                : 'Order Detail'}
+            </DialogTitle>
             <DialogDescription>
               {selectedOrder?.description}
             </DialogDescription>
@@ -451,7 +482,9 @@ export function OrdersTab({ patientId }: OrdersTabProps) {
                   variant="outline"
                   className={statusColors[selectedOrder.status] || ''}
                 >
-                  {selectedOrder.status}
+                  {selectedOrder.type === 'referral'
+                    ? referralStatusLabels[selectedOrder.status] || selectedOrder.status
+                    : selectedOrder.status}
                 </Badge>
               </div>
               <div className="flex justify-between">
@@ -491,6 +524,107 @@ export function OrdersTab({ patientId }: OrdersTabProps) {
                     {selectedOrder.note}
                   </span>
                 </div>
+              )}
+
+              {/* Referral Status Tracking */}
+              {selectedOrder.type === 'referral' && (
+                <>
+                  <Separator />
+                  <div>
+                    <h4 className="mb-3 flex items-center gap-2 font-semibold">
+                      <Stethoscope className="h-4 w-4" />
+                      Referral Tracking
+                    </h4>
+                    <div className="space-y-3">
+                      {/* Referral detail fields */}
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Calendar className="h-3 w-3" />
+                        <span>Referral Date:</span>
+                        <span className="font-medium text-foreground">
+                          {new Date(selectedOrder.orderDate).toLocaleDateString('en-US', {
+                            month: 'long',
+                            day: 'numeric',
+                            year: 'numeric',
+                          })}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <User className="h-3 w-3" />
+                        <span>Referring Provider:</span>
+                        <span className="font-medium text-foreground">
+                          {selectedOrder.orderingProvider}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Clock className="h-3 w-3" />
+                        <span>Current Status:</span>
+                        <Badge
+                          variant="outline"
+                          className={statusColors[selectedOrder.status] || ''}
+                        >
+                          {referralStatusLabels[selectedOrder.status] || selectedOrder.status}
+                        </Badge>
+                      </div>
+
+                      {/* Status Progress Steps */}
+                      <div className="mt-3 rounded-lg border p-3">
+                        <p className="mb-2 text-xs font-medium">Referral Progress</p>
+                        <div className="flex items-center gap-1">
+                          {['Pending', 'Scheduling', 'Scheduled', 'Completed'].map(
+                            (step, index) => {
+                              const currentStep = getReferralStep(selectedOrder.status);
+                              const isActive = currentStep >= index;
+                              const isCancelled = currentStep === -1;
+                              return (
+                                <React.Fragment key={step}>
+                                  <div
+                                    className={`flex h-7 items-center justify-center rounded-full px-2 text-xs font-medium ${
+                                      isCancelled
+                                        ? 'bg-red-100 text-red-600'
+                                        : isActive
+                                          ? 'bg-primary text-primary-foreground'
+                                          : 'bg-muted text-muted-foreground'
+                                    }`}
+                                  >
+                                    {step}
+                                  </div>
+                                  {index < 3 && (
+                                    <ArrowRight
+                                      className={`h-3 w-3 flex-shrink-0 ${
+                                        isActive && !isCancelled
+                                          ? 'text-primary'
+                                          : 'text-muted-foreground'
+                                      }`}
+                                    />
+                                  )}
+                                </React.Fragment>
+                              );
+                            },
+                          )}
+                        </div>
+                        {getReferralStep(selectedOrder.status) === -1 && (
+                          <p className="mt-2 text-xs text-red-600">
+                            This referral has been cancelled.
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Clock className="h-3 w-3" />
+                        <span>Last Updated:</span>
+                        <span className="font-medium text-foreground">
+                          {new Date(selectedOrder.orderDate).toLocaleString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric',
+                            hour: 'numeric',
+                            minute: '2-digit',
+                          })}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </>
               )}
             </div>
           )}

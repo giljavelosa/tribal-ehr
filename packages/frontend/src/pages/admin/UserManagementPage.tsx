@@ -298,12 +298,13 @@ export function UserManagementPage() {
         <CardContent className="p-4">
           <div className="flex flex-col gap-4 sm:flex-row">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+              <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" aria-hidden="true" />
               <Input
                 placeholder="Search by name, username, or email..."
                 className="pl-9"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                aria-label="Search users by name, username, or email"
               />
             </div>
             <Select value={roleFilter} onValueChange={setRoleFilter}>
@@ -340,7 +341,7 @@ export function UserManagementPage() {
               <p className="text-muted-foreground">No users found matching your criteria.</p>
             </div>
           ) : (
-            <Table>
+            <Table aria-label="User accounts">
               <TableHeader>
                 <TableRow>
                   <TableHead>Username</TableHead>

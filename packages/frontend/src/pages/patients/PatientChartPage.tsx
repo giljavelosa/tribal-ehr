@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, lazy, Suspense } from 'react';
+import React, { useCallback, useEffect, useState, lazy, Suspense } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -6,6 +6,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent } from '@/components/ui/card';
 import { usePatient, useAllergies } from '@/hooks/use-api';
 import { usePatientContext } from '@/stores/patient-context-store';
+import { BreakGlassDialog } from '@/components/patient/BreakGlassDialog';
+import { BreakGlassRequiredError } from '@/lib/api';
 
 // Lazy-loaded tab components
 const SummaryTab = lazy(() =>
@@ -68,6 +70,11 @@ const DevicesTab = lazy(() =>
     default: m.DevicesTab,
   })),
 );
+const FamilyHistoryTab = lazy(() =>
+  import('@/components/patient/FamilyHistoryTab').then((m) => ({
+    default: m.FamilyHistoryTab,
+  })),
+);
 const HistoryTab = lazy(() =>
   import('@/components/patient/HistoryTab').then((m) => ({
     default: m.HistoryTab,
@@ -87,6 +94,7 @@ const TAB_KEYS = [
   'care-plan',
   'devices',
   'documents',
+  'family-history',
   'history',
 ] as const;
 
@@ -105,6 +113,7 @@ const TAB_LABELS: Record<TabKey, string> = {
   'care-plan': 'Care Plan',
   devices: 'Devices',
   documents: 'Documents',
+  'family-history': 'Family Hx',
   history: 'History',
 };
 
@@ -123,10 +132,16 @@ export function PatientChartPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const patientId = id || '';
-  const { data: patient, isLoading, error } = usePatient(patientId);
+  const { data: patient, isLoading, error, refetch } = usePatient(patientId);
   const { data: allergies } = useAllergies(patientId);
   const setPatientContext = usePatientContext((s) => s.setPatientContext);
   const clearPatientContext = usePatientContext((s) => s.clearPatientContext);
+
+  // Break-glass state
+  const [breakGlassOpen, setBreakGlassOpen] = useState(false);
+  const breakGlassRequired =
+    error instanceof BreakGlassRequiredError ||
+    (error instanceof Error && error.message?.includes('Emergency access override required'));
 
   // Set global patient context when patient data loads
   useEffect(() => {
@@ -165,17 +180,46 @@ export function PatientChartPage() {
         </Button>
         <Card>
           <CardContent className="py-12 text-center">
-            <p className="text-destructive">
-              Failed to load patient record. The patient may not exist or an
-              error occurred.
-            </p>
-            <Button
-              variant="outline"
-              className="mt-4"
-              onClick={() => navigate('/patients')}
-            >
-              Return to Patient List
-            </Button>
+            {breakGlassRequired ? (
+              <>
+                <p className="text-destructive font-semibold">
+                  This patient&apos;s data is restricted by consent directives.
+                </p>
+                <p className="text-muted-foreground mt-2 text-sm">
+                  Emergency access override (break-glass) is required to view this record.
+                </p>
+                <Button
+                  variant="destructive"
+                  className="mt-4"
+                  onClick={() => setBreakGlassOpen(true)}
+                >
+                  Request Emergency Access
+                </Button>
+                <BreakGlassDialog
+                  open={breakGlassOpen}
+                  onClose={() => setBreakGlassOpen(false)}
+                  patientId={patientId}
+                  onBreakGlassGranted={() => {
+                    setBreakGlassOpen(false);
+                    refetch();
+                  }}
+                />
+              </>
+            ) : (
+              <>
+                <p className="text-destructive">
+                  Failed to load patient record. The patient may not exist or an
+                  error occurred.
+                </p>
+                <Button
+                  variant="outline"
+                  className="mt-4"
+                  onClick={() => navigate('/patients')}
+                >
+                  Return to Patient List
+                </Button>
+              </>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -274,6 +318,10 @@ export function PatientChartPage() {
 
             <TabsContent value="documents" className="mt-0">
               <DocumentsTab patientId={patientId} />
+            </TabsContent>
+
+            <TabsContent value="family-history" className="mt-0">
+              <FamilyHistoryTab patientId={patientId} />
             </TabsContent>
 
             <TabsContent value="history" className="mt-0">

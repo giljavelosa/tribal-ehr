@@ -9,6 +9,8 @@ import {
   ClipboardList,
   Plus,
   Send,
+  Loader2,
+  AlertCircle,
 } from 'lucide-react';
 import {
   Card,
@@ -44,102 +46,19 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { toast } from '@/components/ui/toast';
+import {
+  useOrderSets,
+  useCreateOrderSet,
+  useApplyOrderSet,
+  type OrderSetItem,
+} from '@/hooks/use-api';
 
 interface OrderItem {
   id?: string;
   name?: string;
   type?: string;
 }
-
-interface OrderSet {
-  id: string;
-  name: string;
-  category: string;
-  description: string;
-  orders: OrderItem[];
-  approved: boolean;
-  version: number;
-}
-
-const mockOrderSets: OrderSet[] = [
-  {
-    id: '1',
-    name: 'Admission Orders - General',
-    category: 'General',
-    description: 'Standard admission order set including vitals, diet, activity level, and nursing assessments',
-    orders: [
-      { id: 'o1', name: 'Vital Signs q4h', type: 'Nursing' },
-      { id: 'o2', name: 'Regular Diet', type: 'Diet' },
-      { id: 'o3', name: 'Activity as Tolerated', type: 'Activity' },
-    ],
-    approved: true,
-    version: 1,
-  },
-  {
-    id: '2',
-    name: 'Diabetic Management',
-    category: 'Medications',
-    description: 'Insulin and monitoring orders for diabetes management including sliding scale and A1c monitoring',
-    orders: [
-      { id: 'o4', name: 'Insulin Glargine 10U SC QHS', type: 'Medication' },
-      { id: 'o5', name: 'Insulin Lispro Sliding Scale', type: 'Medication' },
-      { id: 'o6', name: 'Blood Glucose AC & HS', type: 'Laboratory' },
-      { id: 'o7', name: 'HbA1c', type: 'Laboratory' },
-    ],
-    approved: true,
-    version: 2,
-  },
-  {
-    id: '3',
-    name: 'Pre-Op Labs',
-    category: 'Laboratory',
-    description: 'Standard pre-operative laboratory panel including CBC, BMP, coagulation studies',
-    orders: [
-      { id: 'o8', name: 'CBC with Differential', type: 'Laboratory' },
-      { id: 'o9', name: 'Basic Metabolic Panel', type: 'Laboratory' },
-    ],
-    approved: false,
-    version: 1,
-  },
-  {
-    id: '4',
-    name: 'Chest Pain Workup',
-    category: 'Laboratory',
-    description: 'Cardiac biomarkers and imaging for chest pain evaluation',
-    orders: [
-      { id: 'o10', name: 'Troponin I (serial)', type: 'Laboratory' },
-      { id: 'o11', name: 'BNP', type: 'Laboratory' },
-      { id: 'o12', name: 'Chest X-Ray PA/Lateral', type: 'Imaging' },
-    ],
-    approved: true,
-    version: 3,
-  },
-  {
-    id: '5',
-    name: 'CT Abdomen/Pelvis Protocol',
-    category: 'Imaging',
-    description: 'Standard CT abdomen and pelvis with contrast protocol and prep orders',
-    orders: [
-      { id: 'o13', name: 'CT Abdomen/Pelvis with Contrast', type: 'Imaging' },
-      { id: 'o14', name: 'BUN/Creatinine (pre-contrast)', type: 'Laboratory' },
-    ],
-    approved: true,
-    version: 1,
-  },
-  {
-    id: '6',
-    name: 'Pain Management - Post-Op',
-    category: 'Medications',
-    description: 'Multimodal pain management for post-operative patients',
-    orders: [
-      { id: 'o15', name: 'Acetaminophen 1000mg PO q6h', type: 'Medication' },
-      { id: 'o16', name: 'Ketorolac 15mg IV q6h x 48h', type: 'Medication' },
-      { id: 'o17', name: 'Hydromorphone 0.5mg IV PRN', type: 'Medication' },
-    ],
-    approved: true,
-    version: 2,
-  },
-];
 
 const categories = ['All', 'General', 'Medications', 'Laboratory', 'Imaging'];
 
@@ -167,8 +86,12 @@ export function OrderSetsPage() {
   // Simulated admin role
   const isAdmin = true;
 
+  const { data: orderSets, isLoading, error } = useOrderSets();
+  const createOrderSetMutation = useCreateOrderSet();
+  const applyOrderSetMutation = useApplyOrderSet();
+
   const filteredSets = useMemo(() => {
-    let result = mockOrderSets;
+    let result = orderSets || [];
     if (categoryFilter !== 'All') {
       result = result.filter((s) => s.category === categoryFilter);
     }
@@ -177,12 +100,12 @@ export function OrderSetsPage() {
       result = result.filter(
         (s) =>
           s.name.toLowerCase().includes(q) ||
-          s.description.toLowerCase().includes(q) ||
-          s.category.toLowerCase().includes(q),
+          (s.description || '').toLowerCase().includes(q) ||
+          (s.category || '').toLowerCase().includes(q),
       );
     }
     return result;
-  }, [categoryFilter, searchQuery]);
+  }, [orderSets, categoryFilter, searchQuery]);
 
   const handleToggleExpand = (id: string) => {
     setExpandedSetId((prev) => (prev === id ? null : id));
@@ -195,21 +118,84 @@ export function OrderSetsPage() {
   };
 
   const handleConfirmApply = () => {
-    if (!patientId.trim()) return;
-    // In production, this would POST to the API
-    setApplyDialogOpen(false);
-    setApplyingSetId(null);
-    setPatientId('');
+    if (!patientId.trim() || !applyingSetId) return;
+    applyOrderSetMutation.mutate(
+      {
+        orderSetId: applyingSetId,
+        patientId: patientId.trim(),
+      },
+      {
+        onSuccess: (result) => {
+          toast({
+            title: 'Order set applied',
+            description: `${result.ordersCreated} orders created successfully.`,
+          });
+          setApplyDialogOpen(false);
+          setApplyingSetId(null);
+          setPatientId('');
+        },
+        onError: (err: Error) => {
+          toast({
+            title: 'Failed to apply order set',
+            description: err.message,
+            variant: 'destructive',
+          });
+        },
+      },
+    );
   };
 
   const handleCreateOrderSet = () => {
     if (!newSetForm.name.trim() || !newSetForm.description.trim()) return;
-    // In production, this would POST to the API
-    setCreateDialogOpen(false);
-    setNewSetForm({ name: '', category: 'General', description: '' });
+    createOrderSetMutation.mutate(
+      {
+        name: newSetForm.name.trim(),
+        category: newSetForm.category,
+        description: newSetForm.description.trim(),
+        orders: [],
+      },
+      {
+        onSuccess: () => {
+          toast({ title: 'Order set created successfully' });
+          setCreateDialogOpen(false);
+          setNewSetForm({ name: '', category: 'General', description: '' });
+        },
+        onError: (err: Error) => {
+          toast({
+            title: 'Failed to create order set',
+            description: err.message,
+            variant: 'destructive',
+          });
+        },
+      },
+    );
   };
 
-  const applyingSet = mockOrderSets.find((s) => s.id === applyingSetId);
+  const applyingSet = (orderSets || []).find((s) => s.id === applyingSetId);
+
+  const getOrderItems = (orderSet: OrderSetItem): OrderItem[] => {
+    if (!Array.isArray(orderSet.orders)) return [];
+    return orderSet.orders as OrderItem[];
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-24">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        <span className="ml-2 text-muted-foreground">Loading order sets...</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-destructive">
+        <AlertCircle className="h-8 w-8 mb-2" />
+        <p className="font-medium">Failed to load order sets</p>
+        <p className="text-sm text-muted-foreground">{(error as Error).message}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -267,6 +253,7 @@ export function OrderSetsPage() {
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {filteredSets.map((orderSet) => {
             const isExpanded = expandedSetId === orderSet.id;
+            const orderItems = getOrderItems(orderSet);
 
             return (
               <Card
@@ -281,16 +268,16 @@ export function OrderSetsPage() {
                         {orderSet.name}
                       </CardTitle>
                       <CardDescription className="mt-1">
-                        {orderSet.description}
+                        {orderSet.description || 'No description'}
                       </CardDescription>
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2 pt-2">
                     <Badge
                       variant="outline"
-                      className={categoryColors[orderSet.category] || ''}
+                      className={categoryColors[orderSet.category || ''] || ''}
                     >
-                      {orderSet.category}
+                      {orderSet.category || 'General'}
                     </Badge>
                     {orderSet.approved ? (
                       <Badge className="gap-1 bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
@@ -304,7 +291,7 @@ export function OrderSetsPage() {
                       </Badge>
                     )}
                     <Badge variant="secondary">
-                      {orderSet.orders.length} order{orderSet.orders.length !== 1 ? 's' : ''}
+                      {orderItems.length} order{orderItems.length !== 1 ? 's' : ''}
                     </Badge>
                     <Badge variant="outline" className="text-xs">
                       v{orderSet.version}
@@ -353,7 +340,7 @@ export function OrderSetsPage() {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {orderSet.orders.map((order, index) => (
+                          {orderItems.map((order, index) => (
                             <TableRow key={order.id || index}>
                               <TableCell className="font-medium">
                                 {order.name || `Order ${index + 1}`}
@@ -365,7 +352,7 @@ export function OrderSetsPage() {
                               </TableCell>
                             </TableRow>
                           ))}
-                          {orderSet.orders.length === 0 && (
+                          {orderItems.length === 0 && (
                             <TableRow>
                               <TableCell colSpan={2} className="text-center text-muted-foreground">
                                 No orders defined in this set.
@@ -390,7 +377,7 @@ export function OrderSetsPage() {
             <DialogTitle>Apply Order Set to Patient</DialogTitle>
             <DialogDescription>
               {applyingSet
-                ? `Apply "${applyingSet.name}" (${applyingSet.orders.length} orders) to a patient.`
+                ? `Apply "${applyingSet.name}" (${getOrderItems(applyingSet).length} orders) to a patient.`
                 : 'Select a patient to apply this order set.'}
             </DialogDescription>
           </DialogHeader>
@@ -408,7 +395,7 @@ export function OrderSetsPage() {
               <div className="rounded-lg border p-3">
                 <p className="text-sm font-medium">Orders to be applied:</p>
                 <ul className="mt-2 space-y-1">
-                  {applyingSet.orders.map((order, index) => (
+                  {getOrderItems(applyingSet).map((order, index) => (
                     <li key={order.id || index} className="text-sm text-muted-foreground">
                       {order.name || `Order ${index + 1}`}
                     </li>
@@ -421,7 +408,13 @@ export function OrderSetsPage() {
             <Button variant="outline" onClick={() => setApplyDialogOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleConfirmApply} disabled={!patientId.trim()}>
+            <Button
+              onClick={handleConfirmApply}
+              disabled={!patientId.trim() || applyOrderSetMutation.isPending}
+            >
+              {applyOrderSetMutation.isPending && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
               Apply Orders
             </Button>
           </DialogFooter>
@@ -489,8 +482,15 @@ export function OrderSetsPage() {
             </Button>
             <Button
               onClick={handleCreateOrderSet}
-              disabled={!newSetForm.name.trim() || !newSetForm.description.trim()}
+              disabled={
+                !newSetForm.name.trim() ||
+                !newSetForm.description.trim() ||
+                createOrderSetMutation.isPending
+              }
             >
+              {createOrderSetMutation.isPending && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
               Create Order Set
             </Button>
           </DialogFooter>

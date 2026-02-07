@@ -7,6 +7,8 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  UserCheck,
+  Send,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -48,8 +50,10 @@ import {
   useNotes,
   useCreateNote,
   useUpdateNote,
+  useCosignNote,
   type ClinicalNote,
 } from '@/hooks/use-api';
+import { useAuthStore } from '@/stores/auth-store';
 
 interface NotesTabProps {
   patientId: string;
@@ -177,6 +181,8 @@ export function NotesTab({ patientId }: NotesTabProps) {
   const { data: notes, isLoading, error } = useNotes(patientId);
   const createNote = useCreateNote();
   const updateNote = useUpdateNote();
+  const cosignNote = useCosignNote();
+  const currentUser = useAuthStore((s) => s.user);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
@@ -185,6 +191,8 @@ export function NotesTab({ patientId }: NotesTabProps) {
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const [editorDialogOpen, setEditorDialogOpen] = useState(false);
   const [editingNote, setEditingNote] = useState<ClinicalNote | null>(null);
+  const [cosignDialogOpen, setCosignDialogOpen] = useState(false);
+  const [cosignTargetNote, setCosignTargetNote] = useState<ClinicalNote | null>(null);
   const [formData, setFormData] = useState({
     type: 'soap' as ClinicalNote['type'],
     title: '',
@@ -271,8 +279,57 @@ export function NotesTab({ patientId }: NotesTabProps) {
     [patientId, updateNote],
   );
 
+  const handleRequestCosign = useCallback(
+    (note: ClinicalNote) => {
+      setCosignTargetNote(note);
+      setCosignDialogOpen(true);
+    },
+    [],
+  );
+
+  const handleCosign = useCallback(
+    async (note: ClinicalNote) => {
+      await cosignNote.mutateAsync({
+        noteId: note.id,
+        patientId,
+      });
+    },
+    [patientId, cosignNote],
+  );
+
+  const handleConfirmRequestCosign = useCallback(
+    async () => {
+      if (!cosignTargetNote) return;
+      // Request co-sign by updating the note with a cosigner field
+      await updateNote.mutateAsync({
+        patientId,
+        noteId: cosignTargetNote.id,
+        data: { cosigner: 'pending' },
+      });
+      setCosignDialogOpen(false);
+      setCosignTargetNote(null);
+    },
+    [cosignTargetNote, patientId, updateNote],
+  );
+
   const toggleExpanded = (noteId: string) => {
     setExpandedNoteId(expandedNoteId === noteId ? null : noteId);
+  };
+
+  // Determine if the current user is the note author
+  const isNoteAuthor = (note: ClinicalNote) => {
+    if (!currentUser) return false;
+    const fullName = `${currentUser.firstName} ${currentUser.lastName}`;
+    return note.author === fullName || note.author === currentUser.username;
+  };
+
+  // Determine if the user can co-sign (not the author, and is a provider/supervisor)
+  const canCosign = (note: ClinicalNote) => {
+    if (!currentUser) return false;
+    // Must not be the author
+    if (isNoteAuthor(note)) return false;
+    // Must be a provider or admin role
+    return ['admin', 'provider'].includes(currentUser.role);
   };
 
   if (error) {
@@ -362,7 +419,7 @@ export function NotesTab({ patientId }: NotesTabProps) {
                   <TableHead>Title</TableHead>
                   <TableHead>Author</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead className="w-[120px]">Actions</TableHead>
+                  <TableHead className="w-[180px]">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -437,18 +494,51 @@ export function NotesTab({ patientId }: NotesTabProps) {
                             </>
                           )}
                           {note.status === 'signed' && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openEditNote(note);
-                              }}
-                              title="Addend"
-                            >
-                              <PenLine className="h-4 w-4" />
-                            </Button>
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openEditNote(note);
+                                }}
+                                title="Addend"
+                              >
+                                <PenLine className="h-4 w-4" />
+                              </Button>
+                              {/* Request Co-sign: visible to note author when not yet co-signed */}
+                              {isNoteAuthor(note) && !note.cosigner && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-blue-600"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleRequestCosign(note);
+                                  }}
+                                  title="Request Co-sign"
+                                >
+                                  <Send className="h-4 w-4" />
+                                </Button>
+                              )}
+                              {/* Co-sign: visible to supervisors/providers who are not the author */}
+                              {canCosign(note) && note.cosigner === 'pending' && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-green-600"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleCosign(note);
+                                  }}
+                                  title="Co-sign"
+                                  disabled={cosignNote.isPending}
+                                >
+                                  <UserCheck className="h-4 w-4" />
+                                </Button>
+                              )}
+                            </>
                           )}
                         </div>
                       </TableCell>
@@ -471,8 +561,16 @@ export function NotesTab({ patientId }: NotesTabProps) {
                                   ).toLocaleString('en-US')}
                                 </span>
                               )}
-                              {note.cosigner && (
-                                <span>Co-signer: {note.cosigner}</span>
+                              {note.cosigner && note.cosigner !== 'pending' && (
+                                <span className="flex items-center gap-1">
+                                  <UserCheck className="h-3 w-3" />
+                                  Co-signed by: {note.cosigner}
+                                </span>
+                              )}
+                              {note.cosigner === 'pending' && (
+                                <Badge variant="outline" className="bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400 text-xs">
+                                  Co-sign pending
+                                </Badge>
                               )}
                             </div>
                             <Separator className="mb-3" />
@@ -638,6 +736,46 @@ export function NotesTab({ patientId }: NotesTabProps) {
               {createNote.isPending || updateNote.isPending
                 ? 'Saving...'
                 : 'Sign Note'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Request Co-sign Dialog */}
+      <Dialog open={cosignDialogOpen} onOpenChange={setCosignDialogOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Request Co-signature</DialogTitle>
+            <DialogDescription>
+              This will flag the note for co-signing by a supervisor or another
+              provider.
+            </DialogDescription>
+          </DialogHeader>
+          {cosignTargetNote && (
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Note</span>
+                <span className="font-medium">{cosignTargetNote.title}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Type</span>
+                <Badge variant="outline" className={typeColors[cosignTargetNote.type] || ''}>
+                  {typeLabels[cosignTargetNote.type] || cosignTargetNote.type}
+                </Badge>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCosignDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleConfirmRequestCosign}
+              disabled={updateNote.isPending}
+              className="gap-1"
+            >
+              <Send className="h-4 w-4" />
+              {updateNote.isPending ? 'Requesting...' : 'Request Co-sign'}
             </Button>
           </DialogFooter>
         </DialogContent>

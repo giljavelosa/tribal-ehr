@@ -49,6 +49,9 @@ import orderSetsRouter from './routes/order-sets';
 import trainingRouter from './routes/training';
 import safetyIncidentsRouter from './routes/safety-incidents';
 import saferAssessmentsRouter from './routes/safer-assessments';
+import familyHistoryRouter from './routes/family-history';
+import consentsRouter from './routes/consents';
+import directMessagingRouter from './routes/direct-messaging';
 import { responseTimeMiddleware, responseTimeCollector } from './middleware/response-time';
 
 // Morgan custom format that excludes PHI - only log method, url, status, response time
@@ -185,8 +188,11 @@ export function createApp(): express.Application {
   app.get('/.well-known/smart-configuration', (_req: Request, res: Response) => {
     const baseUrl = process.env.API_BASE_URL || `http://localhost:${config.server.port}`;
     res.json({
+      issuer: `${baseUrl}`,
+      jwks_uri: `${baseUrl}/auth/jwks`,
       authorization_endpoint: `${baseUrl}/auth/authorize`,
       token_endpoint: `${baseUrl}/auth/token`,
+      grant_types_supported: ['authorization_code', 'client_credentials', 'refresh_token'],
       token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post', 'private_key_jwt'],
       registration_endpoint: `${baseUrl}/auth/register`,
       scopes_supported: [
@@ -223,17 +229,6 @@ export function createApp(): express.Application {
         'context-style',
       ],
     });
-  });
-
-  // FHIR CapabilityStatement alias
-  app.get('/fhir/metadata', async (_req: Request, res: Response) => {
-    try {
-      const axios = await import('axios');
-      const response = await axios.default.get(`${config.fhir.serverUrl}/metadata`, { timeout: 10000 });
-      res.json(response.data);
-    } catch {
-      res.status(503).json({ error: 'FHIR server unavailable' });
-    }
   });
 
   // Auth routes (with stricter rate limiting, no JWT auth required)
@@ -279,6 +274,9 @@ export function createApp(): express.Application {
   app.use('/api/v1/training', trainingRouter);
   app.use('/api/v1/safety-incidents', safetyIncidentsRouter);
   app.use('/api/v1/safer-assessments', saferAssessmentsRouter);
+  app.use('/api/v1/family-history', familyHistoryRouter);
+  app.use('/api/v1/consents', consentsRouter);
+  app.use('/api/v1/direct-messaging', directMessagingRouter);
 
   // 404 handler
   app.use(notFoundHandler);

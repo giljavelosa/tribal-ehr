@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Shield, Eye, EyeOff } from 'lucide-react';
+import { Shield, Eye, EyeOff, Mail } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -12,14 +12,24 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useAuthStore } from '@/stores/auth-store';
+import { useForgotPassword } from '@/hooks/use-api';
 
 export function LoginPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const login = useAuthStore((s) => s.login);
   const isLoading = useAuthStore((s) => s.isLoading);
+  const forgotPassword = useForgotPassword();
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -27,6 +37,12 @@ export function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [showMfa, setShowMfa] = useState(false);
   const [error, setError] = useState('');
+
+  // Forgot password state
+  const [forgotDialogOpen, setForgotDialogOpen] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotSuccess, setForgotSuccess] = useState(false);
+  const [forgotError, setForgotError] = useState('');
 
   const sessionTimeout = searchParams.get('reason') === 'session_timeout';
 
@@ -45,6 +61,31 @@ export function LoginPage() {
       }
       setError(message);
     }
+  };
+
+  const handleForgotPassword = async () => {
+    setForgotError('');
+    setForgotSuccess(false);
+
+    if (!forgotEmail) {
+      setForgotError('Please enter your email address.');
+      return;
+    }
+
+    try {
+      await forgotPassword.mutateAsync({ email: forgotEmail });
+      setForgotSuccess(true);
+    } catch {
+      // Even on error, show success message for security (don't reveal if email exists)
+      setForgotSuccess(true);
+    }
+  };
+
+  const handleOpenForgotDialog = () => {
+    setForgotEmail('');
+    setForgotSuccess(false);
+    setForgotError('');
+    setForgotDialogOpen(true);
   };
 
   return (
@@ -116,6 +157,7 @@ export function LoginPage() {
                     size="icon"
                     className="absolute right-0 top-0 h-10 w-10"
                     onClick={() => setShowPassword(!showPassword)}
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
                   >
                     {showPassword ? (
                       <EyeOff className="h-4 w-4" />
@@ -143,16 +185,14 @@ export function LoginPage() {
               )}
             </CardContent>
             <CardFooter className="flex flex-col gap-3">
-              <Button type="submit" className="w-full" disabled={isLoading}>
+              <Button type="submit" className="w-full" disabled={isLoading} aria-busy={isLoading}>
                 {isLoading ? 'Signing in...' : 'Sign In'}
               </Button>
               <Button
                 type="button"
                 variant="link"
                 className="text-sm"
-                onClick={() => {
-                  /* TODO: forgot password flow */
-                }}
+                onClick={handleOpenForgotDialog}
               >
                 Forgot password?
               </Button>
@@ -166,6 +206,71 @@ export function LoginPage() {
           All access is logged and monitored for HIPAA compliance.
         </p>
       </div>
+
+      {/* Forgot Password Dialog */}
+      <Dialog open={forgotDialogOpen} onOpenChange={setForgotDialogOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Reset Password</DialogTitle>
+            <DialogDescription>
+              Enter your email address and we will send you a link to reset your
+              password.
+            </DialogDescription>
+          </DialogHeader>
+          {forgotSuccess ? (
+            <div className="space-y-3">
+              <Alert>
+                <Mail className="h-4 w-4" />
+                <AlertDescription>
+                  If an account exists with this email, a password reset link has
+                  been sent.
+                </AlertDescription>
+              </Alert>
+              <DialogFooter>
+                <Button onClick={() => setForgotDialogOpen(false)}>
+                  Back to Login
+                </Button>
+              </DialogFooter>
+            </div>
+          ) : (
+            <>
+              <div className="space-y-4">
+                {forgotError && (
+                  <Alert variant="destructive">
+                    <AlertDescription>{forgotError}</AlertDescription>
+                  </Alert>
+                )}
+                <div className="space-y-2">
+                  <Label htmlFor="forgotEmail">Email Address</Label>
+                  <Input
+                    id="forgotEmail"
+                    type="email"
+                    placeholder="Enter your email address"
+                    value={forgotEmail}
+                    onChange={(e) => setForgotEmail(e.target.value)}
+                    autoComplete="email"
+                    autoFocus
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={() => setForgotDialogOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleForgotPassword}
+                  disabled={!forgotEmail || forgotPassword.isPending}
+                >
+                  {forgotPassword.isPending ? 'Sending...' : 'Send Reset Link'}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

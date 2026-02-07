@@ -5,6 +5,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { authenticate, requirePermission, requireRole } from '../middleware/auth';
 import { validate, validateQuery } from '../middleware/validation';
+import { requirePatientAccess, consentFilter } from '../middleware/consent-filter';
 import { patientService } from '../services/patient.service';
 import { patientMatchingService } from '../services/patient-matching.service';
 import { patientListService } from '../services/patient-list.service';
@@ -252,6 +253,7 @@ router.get(
   '/:id',
   authenticate,
   requirePermission('patient', 'read'),
+  requirePatientAccess('id'),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const patient = await patientService.getById(req.params.id);
@@ -494,6 +496,7 @@ router.get(
   '/:id/everything',
   authenticate,
   requirePermission('patient', 'read'),
+  requirePatientAccess('id'),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const patient = await patientService.getById(req.params.id);
@@ -803,6 +806,7 @@ router.get(
   '/:id/conditions',
   authenticate,
   requirePermission('patient', 'read'),
+  consentFilter('id'),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const db = patientService['db'];
@@ -1030,6 +1034,7 @@ router.get(
   '/:id/observations',
   authenticate,
   requirePermission('patient', 'read'),
+  consentFilter('id'),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const db = patientService['db'];
